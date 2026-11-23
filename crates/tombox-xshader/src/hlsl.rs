@@ -6405,6 +6405,8 @@ impl<'a> Emitter<'a> {
             return self.mimg_write_lanes(ins, vd, vals, Lane::Float);
         }
         let op = ins.op;
+        let g16 = op & 0x80 != 0;
+        let op = op & 0x7f;
         let gather = (0x40..0x60).contains(&op);
         if !gather && !(0x20..0x40).contains(&op) {
             return Err("unsupported image op".into());
@@ -6472,15 +6474,29 @@ impl<'a> Emitter<'a> {
         };
         let zref = if cmp { Some(f(&take(self))?) } else { None };
         let mut grads = if matches!(modi, 2 | 3) {
-            let mut dx = vec![];
-            for _ in 0..nder {
-                dx.push(f(&take(self))?);
+            if g16 {
+                if nder != 2 {
+                    return Err(format!("{} with {nder}-component 16-bit gradients is not lowered (only the 2-component packing is verified)", ins.mnemonic));
+                }
+                let mut halves: Vec<String> = Vec::with_capacity(2 * nder);
+                for _ in 0..nder {
+                    let o = take(self);
+                    halves.push(format!("f16tof32({} >> {}u)", r(&o)?, 0));
+                    halves.push(format!("f16tof32({} >> {}u)", r(&o)?, 16));
+                }
+                let dy = halves.split_off(nder);
+                Some((halves, dy))
+            } else {
+                let mut dx = vec![];
+                for _ in 0..nder {
+                    dx.push(f(&take(self))?);
+                }
+                let mut dy = vec![];
+                for _ in 0..nder {
+                    dy.push(f(&take(self))?);
+                }
+                Some((dx, dy))
             }
-            let mut dy = vec![];
-            for _ in 0..nder {
-                dy.push(f(&take(self))?);
-            }
-            Some((dx, dy))
         } else {
             None
         };

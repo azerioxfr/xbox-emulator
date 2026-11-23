@@ -313,6 +313,8 @@ pub fn mimg(op: u32) -> Option<&'static str> {
         0x30 => "image_sample_o", 0x34 => "image_sample_l_o", 0x37 => "image_sample_lz_o",
         0x40 => "image_gather4", 0x47 => "image_gather4_lz", 0x48 => "image_gather4_c",
         0x4f => "image_gather4_c_lz", 0x60 => "image_get_lod",
+        0xa2 => "image_sample_d_g16", 0xa3 => "image_sample_d_cl_g16",
+        0xaa => "image_sample_c_d_g16", 0xab => "image_sample_c_d_cl_g16",
         0xe6 => "image_bvh_intersect_ray", 0xe7 => "image_bvh64_intersect_ray",
         _ => return None,
     })

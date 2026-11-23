@@ -140,6 +140,22 @@ fn image_mimg_sample() {
         let (x, y) = pt(m, u, v, (0, 0));
         cs.push(case("image_sample_d_cl", op, build(&pre, &op, 4, 4, false), tex(), ea(m, x, y).to_vec()));
     }
+    for &(g, cl, lod) in &[([0.25f32, 0.0, 0.0, 0.25], 0.0f32, 1.0f32), ([0.25, 0.0, 0.0, 0.25], 1.7, 1.0), ([0.125, 0.0, 0.0, 0.125], 0.0, 0.0), ([0.0, 0.5, 0.0625, 0.0], 0.0, 2.0), ([0.0625, 0.0, 0.0, 1.0], 1.2, 3.0)] {
+        let op = mimg(0xa3, 0xf, 1, 10, 4, 0, 12);
+        let mut pre = Prog::new();
+        pre.vv(10, f2h(g[0]) | (f2h(g[1]) << 16)).vv(11, f2h(g[2]) | (f2h(g[3]) << 16)).vv(12, fb(u)).vv(13, fb(v)).vv(14, fb(cl));
+        let m = nearest(lod.max(cl), 4);
+        let (x, y) = pt(m, u, v, (0, 0));
+        cs.push(case("image_sample_d_cl_g16", op, build(&pre, &op, 4, 4, false), tex(), ea(m, x, y).to_vec()));
+    }
+    for &(g, lod) in &[([0.25f32, 0.0, 0.0, 0.25], 1.0f32), ([0.125, 0.0, 0.0, 0.125], 0.0), ([0.0, 0.5, 0.0625, 0.0], 2.0)] {
+        let op = mimg(0xa2, 0xf, 1, 10, 4, 0, 12);
+        let mut pre = Prog::new();
+        pre.vv(10, f2h(g[0]) | (f2h(g[1]) << 16)).vv(11, f2h(g[2]) | (f2h(g[3]) << 16)).vv(12, fb(u)).vv(13, fb(v));
+        let m = nearest(lod, 4);
+        let (x, y) = pt(m, u, v, (0, 0));
+        cs.push(case("image_sample_d_g16", op, build(&pre, &op, 4, 4, false), tex(), ea(m, x, y).to_vec()));
+    }
     for &(ox, oy) in &[(1i32, -1i32), (-2, 2), (0, 0), (5, 0), (-8, 7)] {
         let op = mimg(0x30, 0xf, 1, 1, 4, 0, 12);
         let mut pre = Prog::new();
@@ -795,4 +811,20 @@ fn image_mimg_atomics_rdna2_silicon() {
     }
     println!("expected values recorded on {}", super::mimg_rdna2::SOURCE);
     run_mem_cases("mimg_atomics_rdna2_silicon", &cs);
+}
+
+#[test]
+fn image_sample_g16_refuses_non_2d_gradients() {
+    for (dim, n) in [(0u32, 1usize), (2, 3)] {
+        let op = mimg(0xa2, 0xf, dim, 10, 4, 0, 12);
+        let mut pre = Prog::new();
+        pre.vv(10, 0).vv(11, 0).vv(12, 0).vv(13, 0).vv(14, 0).vv(15, 0).vv(16, 0);
+        let words = build(&pre, &op, 4, 4, false);
+        let err = match translate(&extract(&words, false)) {
+            Ok(t) => panic!("dim {dim} g16 sample translated:
+{}", t.hlsl),
+            Err(e) => e,
+        };
+        assert!(err.contains(&format!("with {n}-component 16-bit gradients is not lowered")), "dim {dim}: {err}");
+    }
 }
