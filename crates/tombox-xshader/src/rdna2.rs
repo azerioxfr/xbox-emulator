@@ -350,6 +350,12 @@ fn decode_operands(enc: Enc, raw: &[u32]) -> (Vec<Opnd>, Vec<Opnd>, InsnAux) {
             let s0 = d1 & 0x1ff;
             let s1 = (d1 >> 9) & 0x1ff;
             let s2 = (d1 >> 18) & 0x1ff;
+            if matches!(op, 0x200 | 0x201 | 0x202) {
+                aux.mask = 0;
+                aux.imm = (d1 & 0x3f) as i64;
+                aux.imm2 = ((d1 >> 6) & 3) as i64;
+                return (vec![Opnd::Vgpr(vdst as u8)], vec![src9(s1 as u16, l3)], aux);
+            }
             // abs[10:8] in dword0, neg[31:29] + omod[28:27] in dword1, clamp bit 15.
             aux.mask = (((w >> 8) & 7) | (((d1 >> 29) & 7) << 3)) as u8;
             aux.imm2 = ((d1 >> 27) & 3) as i64;

@@ -420,6 +420,53 @@ fn vertex_shader_receives_vertex_and_instance_index_in_v0_and_v3() {
     assert!(t.hlsl.contains("    v4 = asuint(i.i0.x);"), "{}", t.hlsl);
 }
 
+fn vintrp_word(op: u32, vdst: u32, attr: u32, chan: u32, vsrc: u32) -> u32 {
+    0xc800_0000 | (vdst << 18) | (op << 16) | (attr << 10) | (chan << 8) | vsrc
+}
+
+fn vop3_interp_words(op: u32, vdst: u32, attr: u32, chan: u32, vsrc: u32) -> [u32; 2] {
+    [0xd400_0000 | ((0x200 + op) << 16) | vdst, attr | (chan << 6) | ((256 + vsrc) << 9)]
+}
+
+fn interp_signature() -> (Vec<SigElement>, Vec<SigElement>) {
+    let mut pos = sig("SV_Position", 1, 3, 0, 0xf);
+    pos.rw_mask = 3;
+    let mut tex = sig("TEXCOORD", 0, 3, 1, 0xf);
+    tex.rw_mask = 0xf;
+    (vec![pos, tex], vec![sig("SV_Target", 64, 3, 0, 1)])
+}
+
+#[test]
+fn vop3_interp_forms_match_the_vintrp_lowering() {
+    let (ins, outs) = interp_signature();
+    let exp = [0xf800_1c01, 0x0000_0000, S_ENDPGM];
+    let mut vintrp = vec![vintrp_word(0, 0, 0, 2, 0), vintrp_word(1, 0, 0, 2, 1), vintrp_word(2, 0, 0, 2, 0)];
+    vintrp.extend_from_slice(&exp);
+    let mut vop3 = Vec::new();
+    for (op, vsrc) in [(0, 0), (1, 1), (2, 0)] {
+        vop3.extend_from_slice(&vop3_interp_words(op, 0, 0, 2, vsrc));
+    }
+    vop3.extend_from_slice(&exp);
+    let a = translate(&shader(Stage::Pixel, &vintrp, ins.clone(), outs.clone(), None)).expect("VINTRP interp translates");
+    let b = translate(&shader(Stage::Pixel, &vop3, ins, outs, None)).expect("VOP3 interp translates");
+    let body = |h: &str| h.lines().filter(|l| !l.trim_start().starts_with("// 0x")).map(str::to_string).collect::<Vec<_>>().join("\n");
+    assert_eq!(body(&a.hlsl), body(&b.hlsl));
+    assert!(b.hlsl.contains("v0 = TB_WV(asuint(i.i1.z), v0);"), "{}", b.hlsl);
+}
+
+#[test]
+fn vop3_interp_with_modifiers_is_refused() {
+    let (ins, outs) = interp_signature();
+    let mut words: Vec<u32> = vop3_interp_words(0, 0, 0, 0, 0).to_vec();
+    words[1] |= 1 << 30;
+    words.push(S_ENDPGM);
+    let err = match translate(&shader(Stage::Pixel, &words, ins, outs, None)) {
+        Ok(t) => panic!("{}", t.hlsl),
+        Err(e) => e,
+    };
+    assert!(err.contains("v_interp_p1_f32 VOP3 form with abs/neg/clamp/omod/opsel modifiers is not supported"), "{err}");
+}
+
 #[test]
 fn pixel_attribute_past_the_interpolants_reads_the_layer_sysval() {
     let words = [0xc802_0002, 0xf800_1c03, 0x0000_0000, S_ENDPGM];

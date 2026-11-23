@@ -3404,6 +3404,7 @@ impl<'a> Emitter<'a> {
                 }
                 Ok(())
             }
+            Enc::Vop3 if matches!(ins.op, 0x200 | 0x201 | 0x202) => self.emit_interp(ins, is_ps),
             Enc::Vop2 | Enc::Vop1 | Enc::Vop3 | Enc::Vopc => {
                 self.d16 = None;
                 if ins.aux.sdwa.is_none() && dst16(&ins.mnemonic) {
@@ -4348,43 +4349,55 @@ impl<'a> Emitter<'a> {
                 self.line("#endif");
                 self.wv(&d.ok_or("no dst")?, &format!("t{t}"))
             }
-            Enc::Vinterp => {
-                if !is_ps {
-                    return Err("v_interp outside a pixel shader".into());
-                }
-                let attr = ins.aux.imm as usize;
-                let chan = ins.aux.imm2 as usize;
-                let (reg, layer) = match self.ps_attrs.get(attr) {
-                    Some(r) => (*r, false),
-                    None => (
-                        *distinct_regs(self.ex.input_sig.iter().filter(|e| matches!(e.sysval, 4 | 5) && e.rw_mask != 0))
-                            .get(attr - self.ps_attrs.len())
-                            .ok_or_else(|| format!("PS attr{attr} has no signature register"))?,
-                        true,
-                    ),
-                };
-                let found = if layer {
-                    self.ex.input_sig.iter().enumerate().find_map(|(ei, e)| {
-                        (matches!(e.sysval, 4 | 5) && e.register == reg && (e.mask >> chan) & 1 != 0).then(|| (ei, (e.mask & ((1u8 << chan) - 1)).count_ones() as usize))
-                    })
-                } else {
-                    sig_lookup(&self.ex.input_sig, reg, chan)
-                };
-                let val = if let Some((ei, k)) = found {
-                    let acc = format!("i.i{ei}.{}", XYZW[k]);
-                    if self.ex.input_sig[ei].comp_type == 3 { format!("asuint({acc})") } else { format!("(uint)({acc})") }
-                } else if chan == 3 {
-                    "0x3f800000u".to_string()
-                } else {
-                    "0u".to_string()
-                };
-                // p1 computes a partial term in hardware; the full interpolated value is
-                // already available per-pixel here, so both steps assign it.
-                self.wv(&d.ok_or("no dst")?, &val)
-            }
+            Enc::Vinterp => self.emit_interp(ins, is_ps),
             Enc::Exp => self.emit_exp(ins, is_ps),
             _ => Err("unsupported encoding".into()),
         }
+    }
+
+    fn emit_interp(&mut self, ins: &Insn, is_ps: bool) -> Result<(), String> {
+        if !is_ps {
+            return Err("v_interp outside a pixel shader".into());
+        }
+        if ins.enc == Enc::Vop3 {
+            let w = ins.raw[0];
+            let d1 = ins.raw.get(1).copied().unwrap_or(0);
+            let mods = ((w >> 9) & 1) | ((w >> 11) & 0xf) | ((w >> 15) & 1) | ((d1 >> 27) & 3) | ((d1 >> 30) & 1);
+            if mods != 0 {
+                return Err(format!("{} VOP3 form with abs/neg/clamp/omod/opsel modifiers is not supported", ins.mnemonic));
+            }
+            if d1 & 0x100 != 0 {
+                return Err(format!("{} VOP3 form with the f16 high bit is not supported", ins.mnemonic));
+            }
+        }
+        let attr = ins.aux.imm as usize;
+        let chan = ins.aux.imm2 as usize;
+        let (reg, layer) = match self.ps_attrs.get(attr) {
+            Some(r) => (*r, false),
+            None => (
+                *distinct_regs(self.ex.input_sig.iter().filter(|e| matches!(e.sysval, 4 | 5) && e.rw_mask != 0))
+                    .get(attr - self.ps_attrs.len())
+                    .ok_or_else(|| format!("PS attr{attr} has no signature register"))?,
+                true,
+            ),
+        };
+        let found = if layer {
+            self.ex.input_sig.iter().enumerate().find_map(|(ei, e)| {
+                (matches!(e.sysval, 4 | 5) && e.register == reg && (e.mask >> chan) & 1 != 0).then(|| (ei, (e.mask & ((1u8 << chan) - 1)).count_ones() as usize))
+            })
+        } else {
+            sig_lookup(&self.ex.input_sig, reg, chan)
+        };
+        let val = if let Some((ei, k)) = found {
+            let acc = format!("i.i{ei}.{}", XYZW[k]);
+            if self.ex.input_sig[ei].comp_type == 3 { format!("asuint({acc})") } else { format!("(uint)({acc})") }
+        } else if chan == 3 {
+            "0x3f800000u".to_string()
+        } else {
+            "0u".to_string()
+        };
+        let dst = ins.dst.first().ok_or("no dst")?;
+        self.wv(dst, &val)
     }
 
     fn vcmp_cond(&mut self, ins: &Insn, base: &str) -> Result<String, String> {
