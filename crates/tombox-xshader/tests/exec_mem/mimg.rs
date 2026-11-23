@@ -796,3 +796,15 @@ fn image_mimg_atomics_rdna2_silicon() {
     println!("expected values recorded on {}", super::mimg_rdna2::SOURCE);
     run_mem_cases("mimg_atomics_rdna2_silicon", &cs);
 }
+
+#[test]
+fn image_multisampled_uav_load_refused() {
+    let op = mimg(0x00, 0xf, 6, 1, 4, 16, 0);
+    let mut pre = Prog::new();
+    pre.vv(1, fb(0.5)).vv(2, fb(0.5)).vv(3, 0);
+    let words = build(&pre, &op, 4, 4, true);
+    match translate(&extract(&words, false)) {
+        Ok(t) => panic!("expected a multisampled UAV load refusal, got:\n{}", t.hlsl),
+        Err(e) => assert!(e.contains("multisampled UAV load unsupported"), "{e}"),
+    }
+}
