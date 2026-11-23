@@ -3768,6 +3768,25 @@ impl<'a> Emitter<'a> {
                         self.line("// (fetch-shader call: vertex attributes come from the input layout)");
                         Ok(())
                     }
+                    _ if m.contains("wrexec") => {
+                        let op = m.trim_start_matches("s_").split("_wrexec").next().unwrap_or("");
+                        let e = match op {
+                            "andn1" => format!("(~{a} & exec_lo)"),
+                            "andn2" => format!("({a} & ~exec_lo)"),
+                            _ => return Err("unsupported wrexec".into()),
+                        };
+                        let t = self.tmp;
+                        self.tmp += 1;
+                        self.line(&format!("uint t{t} = {e} & 1u;"));
+                        self.line(&format!("exec_lo = t{t}; scc = t{t};"));
+                        self.ws(&d, &format!("t{t}"))?;
+                        if m.ends_with("_b64") {
+                            let dh = hi(&d);
+                            self.touch(&dh);
+                            self.ws(&dh, "0u")?;
+                        }
+                        Ok(())
+                    }
                     _ if m.contains("saveexec") => {
                         let op = m.trim_start_matches("s_").split("_saveexec").next().unwrap_or("");
                         let e = match op {

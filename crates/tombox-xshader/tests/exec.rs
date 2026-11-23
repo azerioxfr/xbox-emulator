@@ -970,6 +970,25 @@ fn saveexec(c: &mut Cases, m: &'static str, op: u32, a: u32, f: fn(u32, u32) -> 
     c.add(m, &pre, &[sop1(op, 20, 10)], &post, &exp);
 }
 
+fn wrexec(c: &mut Cases, m: &'static str, op: u32, a: u32, f: fn(u32, u32) -> u32) {
+    let exec0 = 1u32;
+    let newx = f(a, exec0) & 1;
+    let mut pre = pr();
+    pre.sv(10, a).sv(20, 0xdead_0000).sv(21, 0xdead_0001).raw(&[if newx == 1 { SCC0 } else { SCC1 }]);
+    let mut post = pr();
+    post.raw(&[sop1(3, 30, 126), sop1(3, 31, 127)]).scc_to_v(1).raw(&[sop1(3, 126, ic(1)), sop1(3, 127, ic(0))]);
+    post.s2v(0, 20).s2v(2, 30);
+    let wide = m.ends_with("_b64");
+    if wide {
+        post.s2v(3, 21);
+    }
+    let mut exp = vec![newx, newx, newx];
+    if wide {
+        exp.push(0);
+    }
+    c.add(m, &pre, &[sop1(op, 20, 10)], &post, &exp);
+}
+
 #[test]
 fn wqm_of_exec_keeps_only_the_lane_bit_so_mask_loops_end() {
     let mut c = Cases::new();
@@ -992,16 +1011,23 @@ fn wqm_of_exec_keeps_only_the_lane_bit_so_mask_loops_end() {
 #[test]
 fn scalar_saveexec_lane_model() {
     let mut c = Cases::new();
-    let ops: [(&'static str, u32, fn(u32, u32) -> u32); 11] = [
+    let ops: [(&'static str, u32, fn(u32, u32) -> u32); 18] = [
         ("s_and_saveexec_b32", 0x3c, |a, e| a & e),
         ("s_or_saveexec_b32", 0x3d, |a, e| a | e),
         ("s_xor_saveexec_b32", 0x3e, |a, e| a ^ e),
         ("s_andn2_saveexec_b32", 0x3f, |a, e| a & !e),
         ("s_orn2_saveexec_b32", 0x40, |a, e| a | !e),
+        ("s_nand_saveexec_b32", 0x41, |a, e| !(a & e)),
+        ("s_nor_saveexec_b32", 0x42, |a, e| !(a | e)),
+        ("s_xnor_saveexec_b32", 0x43, |a, e| !(a ^ e)),
+        ("s_andn1_saveexec_b32", 0x44, |a, e| !a & e),
+        ("s_orn1_saveexec_b32", 0x45, |a, e| !a | e),
         ("s_or_saveexec_b64", 0x25, |a, e| a | e),
         ("s_xor_saveexec_b64", 0x26, |a, e| a ^ e),
         ("s_andn2_saveexec_b64", 0x27, |a, e| a & !e),
         ("s_orn2_saveexec_b64", 0x28, |a, e| a | !e),
+        ("s_nor_saveexec_b64", 0x2a, |a, e| !(a | e)),
+        ("s_xnor_saveexec_b64", 0x2b, |a, e| !(a ^ e)),
         ("s_andn1_saveexec_b64", 0x37, |a, e| !a & e),
         ("s_orn1_saveexec_b64", 0x38, |a, e| !a | e),
     ];
@@ -1011,6 +1037,23 @@ fn scalar_saveexec_lane_model() {
         }
     }
     c.run_both("saveexec");
+}
+
+#[test]
+fn scalar_wrexec_lane_model() {
+    let mut c = Cases::new();
+    let ops: [(&'static str, u32, fn(u32, u32) -> u32); 4] = [
+        ("s_andn1_wrexec_b32", 0x46, |a, e| !a & e),
+        ("s_andn2_wrexec_b32", 0x47, |a, e| a & !e),
+        ("s_andn1_wrexec_b64", 0x39, |a, e| !a & e),
+        ("s_andn2_wrexec_b64", 0x3a, |a, e| a & !e),
+    ];
+    for (m, op, f) in ops {
+        for a in [0u32, 1, 0xffff_fffe, 0xffff_ffff] {
+            wrexec(&mut c, m, op, a, f);
+        }
+    }
+    c.run_both("wrexec");
 }
 
 #[test]
