@@ -47,12 +47,14 @@ def changed(base, head):
 def added_lines(base, head, path):
     out = git("diff", "-U0", "--no-color", "--no-ext-diff", base, head, "--", path).decode("utf-8", "replace")
     n = 0
+    in_hunk = False
     for line in out.splitlines():
         if line.startswith("@@"):
             m = re.search(r"\+(\d+)", line)
             n = int(m.group(1)) if m else 0
+            in_hunk = True
             continue
-        if line.startswith("+++"):
+        if not in_hunk:
             continue
         if line.startswith("+"):
             yield n, line[1:]
