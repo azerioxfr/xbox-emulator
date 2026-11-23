@@ -766,3 +766,35 @@ fn image_atomic_64bit_emits_uint64_uav_and_sm66() {
         tombox_xshader::dxc::compile(&t.hlsl, &profile).expect("DXC compile ps_6_6");
     }
 }
+
+fn ds_swizzle_op(offset: u32, addr: u32, vdst: u32) -> [u32; 2] {
+    [0xd800_0000 | (0x35 << 18) | (offset & 0xffff), addr | (vdst << 24)]
+}
+
+fn ps_out() -> Vec<SigElement> {
+    vec![sig("SV_Target", 64, 3, 0, 0xf)]
+}
+
+#[test]
+fn ds_swizzle_refusals_are_explicit() {
+    let words = [ds_swizzle_op(0x8000 | 0xe4, 2, 3)[0], ds_swizzle_op(0x8000 | 0xe4, 2, 3)[1], S_ENDPGM];
+    let vertex_out = || vec![sig("SV_Position", 1, 3, 0, 0xf)];
+    let err = match translate(&shader(Stage::Vertex, &words, vec![], vertex_out(), None)) {
+        Ok(t) => panic!("ds_swizzle in a vertex shader translated:\n{}", t.hlsl),
+        Err(e) => e,
+    };
+    assert!(err.contains("ds_swizzle outside a pixel shader"), "{err}");
+
+    let plain = ds_swizzle_op(0x001f, 2, 3);
+    let err = match translate(&shader(Stage::Pixel, &[plain[0], plain[1], S_ENDPGM], vec![], ps_out(), None)) {
+        Ok(t) => panic!("ds_swizzle without QDMode translated:\n{}", t.hlsl),
+        Err(e) => e,
+    };
+    assert!(err.contains("ds_swizzle without QDMode unsupported"), "{err}");
+
+    let quad = ds_swizzle_op(0x8000 | 0xe4, 2, 3);
+    let t = translate(&shader(Stage::Pixel, &[quad[0], quad[1], S_ENDPGM], vec![], ps_out(), None))
+        .expect("QDMode ds_swizzle translates");
+    assert!(t.hlsl.contains("uint tb_quad = ((uint)i.tb_pos.x & 1u) | (((uint)i.tb_pos.y & 1u) << 1);"), "{}", t.hlsl);
+    assert!(t.hlsl.contains("QuadReadLaneAt(v2, 0u)"), "{}", t.hlsl);
+}
