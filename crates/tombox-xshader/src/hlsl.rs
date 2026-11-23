@@ -1312,7 +1312,7 @@ fn translate_with(ex: &ShaderExtract, out_interp: &InputInterp, user_base_overri
         out_interp: out_interp.clone(),
         user_data,
     };
-    em.vreg_array = em.insns.iter().any(|i| i.mnemonic.starts_with("v_movrel"));
+    em.vreg_array = em.insns.iter().any(|i| i.mnemonic.starts_with("v_movrel") || i.mnemonic == "v_swaprel_b32");
     em.mode_use = mode::analyze(&em.insns);
     if em.mode_use.sp || em.mode_use.dp {
         em.hw_regs.insert(1);
@@ -5104,6 +5104,35 @@ impl<'a> Emitter<'a> {
             // Sign-extended bit field: offset = S1[4:0], width = S2[4:0].
             let (a, o, w) = (r(&s[0])?, r(&s[1])?, r(&s[2])?);
             return self.wv(&d, &format!("tb_bfe_i32({a}, (({o}) & 31u) | ((({w}) & 31u) << 16))"));
+        }
+        if matches!(m.as_str(), "v_movrelsd_2_b32" | "v_swaprel_b32") {
+            let (Opnd::Vgpr(dn), Opnd::Vgpr(sn)) = (d, s[0]) else {
+                return Err("register-relative move with a non-VGPR operand".into());
+            };
+            if !self.vreg_array {
+                return Err("register-relative move outside VGPR-array mode".into());
+            }
+            let t = self.tmp;
+            self.tmp += 1;
+            self.line(&format!("uint t{t}s = ({sn}u + (m0 & 0x3ffu)) & 255u; uint t{t}d = ({dn}u + ((m0 >> 16) & 0x3ffu)) & 255u; uint t{t}a = 0u; uint t{t}b = 0u;"));
+            for (idx, val) in [("s", "a"), ("d", "b")] {
+                self.line(&format!("switch (t{t}{idx}) {{"));
+                for k in 0..256 {
+                    self.line(&format!("case {k}u: t{t}{val} = v{k}; break;"));
+                }
+                self.line("}");
+            }
+            let writes: &[(&str, &str)] = if m == "v_swaprel_b32" { &[("d", "a"), ("s", "b")] } else { &[("d", "a")] };
+            self.line("if (exec_lo & 1u) {");
+            for (idx, val) in writes {
+                self.line(&format!("switch (t{t}{idx}) {{"));
+                for k in 0..256 {
+                    self.line(&format!("case {k}u: v{k} = t{t}{val}; break;"));
+                }
+                self.line("}");
+            }
+            self.line("}");
+            return Ok(());
         }
         if matches!(m.as_str(), "v_movrels_b32" | "v_movreld_b32" | "v_movrelsd_b32") {
             let (Opnd::Vgpr(dn), Opnd::Vgpr(sn)) = (d, s[0]) else {

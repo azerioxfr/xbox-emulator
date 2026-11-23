@@ -36,7 +36,7 @@ pub fn vop1(op: u32) -> Option<&'static str> {
         0x2b => "v_rcp_iflag_f32", 0x2e => "v_rsq_f32", 0x33 => "v_sqrt_f32", 0x35 => "v_sin_f32",
         0x36 => "v_cos_f32", 0x37 => "v_not_b32", 0x38 => "v_bfrev_b32", 0x39 => "v_ffbh_u32",
         0x3a => "v_ffbl_b32", 0x3b => "v_ffbh_i32", 0x65 => "v_swap_b32",
-        0x42 => "v_movreld_b32", 0x43 => "v_movrels_b32", 0x44 => "v_movrelsd_b32",
+        0x42 => "v_movreld_b32", 0x43 => "v_movrels_b32", 0x44 => "v_movrelsd_b32", 0x48 => "v_movrelsd_2_b32", 0x68 => "v_swaprel_b32",
         0x50 => "v_cvt_f16_u16", 0x51 => "v_cvt_f16_i16", 0x52 => "v_cvt_u16_f16", 0x53 => "v_cvt_i16_f16",
         0x54 => "v_rcp_f16", 0x55 => "v_sqrt_f16", 0x56 => "v_rsq_f16", 0x5b => "v_floor_f16",
         0x5c => "v_ceil_f16", 0x5d => "v_trunc_f16", 0x5e => "v_rndne_f16", 0x5f => "v_fract_f16",
@@ -164,7 +164,7 @@ pub fn vop3(op: u32) -> Option<&'static str> {
         return if matches!(op - 0x100, 0x20 | 0x21 | 0x2c | 0x2d | 0x37 | 0x38 | 0x3c) { None } else { vop2(op - 0x100) };
     }
     if (0x180..0x200).contains(&op) {
-        return if op - 0x180 == 0x65 { None } else { vop1(op - 0x180) };
+        return if matches!(op - 0x180, 0x65 | 0x68) { None } else { vop1(op - 0x180) };
     }
     Some(match op {
         0x140 => "v_mad_legacy_f32", 0x141 => "v_mad_f32", 0x142 => "v_mad_i32_i24",

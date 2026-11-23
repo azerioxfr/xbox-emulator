@@ -1266,6 +1266,25 @@ fn vector_vop1() {
     let mut post = pr();
     post.raw(&[vop1(1, 0, v(10)), vop1(1, 1, v(11)), vop1(1, 2, v(12)), vop1(1, 3, v(13))]);
     c.add("v_movrelsd_b32", &pre, &[vop1(0x44, 10, v(1))], &post, &[100, 111, 33, 133]);
+    let rel = |m0: u32| {
+        let mut p = pr();
+        p.vv(1, 11).vv(2, 22).vv(3, 33).vv(4, 44).vv(10, 100).vv(11, 111).vv(12, 122).vv(13, 133).sv(124, m0);
+        p
+    };
+    let post4 = |base: u32| {
+        let mut p = pr();
+        p.raw(&[vop1(1, 0, v(base)), vop1(1, 1, v(base + 1)), vop1(1, 2, v(base + 2)), vop1(1, 3, v(base + 3))]);
+        p
+    };
+    for (m, op, m0, want) in [
+        ("v_movrelsd_2_b32", 0x48u32, 0x0001_0002u32, [11u32, 22, 33, 44, 100, 33, 122, 133]),
+        ("v_movrelsd_2_b32", 0x48, 0x0003_0000, [11, 22, 33, 44, 100, 111, 122, 11]),
+        ("v_swaprel_b32", 0x68, 0x0001_0002, [11, 22, 111, 44, 100, 33, 122, 133]),
+        ("v_swaprel_b32", 0x68, 0x0002_0001, [11, 122, 33, 44, 100, 111, 22, 133]),
+    ] {
+        c.add(m, &rel(m0), &[vop1(op, 10, v(1))], &post4(1), &want[..4]);
+        c.add(m, &rel(m0), &[vop1(op, 10, v(1))], &post4(10), &want[4..]);
+    }
     c.run_both("vop1");
 }
 
