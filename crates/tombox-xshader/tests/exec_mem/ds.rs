@@ -363,6 +363,21 @@ fn ds_lds_b64_compute() {
     b.extend_from_slice(&[vop1(1, 15, v(16))]);
     b.extend_from_slice(&r);
     cs.push(cc("ds_read2_b64", r, b, &[14, 15, 16, 17], &|t| vec![dv(t ^ 1), t * 4, ev(t ^ 1), (t ^ 1) * 8]));
+    for &off in &[0u32, 0x10, 0x400] {
+        for (wop, rop, n, wm, rm) in [(0xdeu32, 0xfeu32, 3usize, "ds_write_b96", "ds_read_b96"), (0xdf, 0xff, 4, "ds_write_b128", "ds_read_b128")] {
+            let w = ds(wop, off, 14, 2, 0, 0);
+            for vd in [10u32, 15] {
+                let r = ds(rop, off, 15, 0, 0, vd);
+                let mut b = sh4.to_vec();
+                b.extend_from_slice(&w);
+                b.extend_from_slice(&r);
+                let outs: Vec<u32> = (vd..vd + n as u32).collect();
+                let f = move |t: u32| vec![dv(t ^ 1), t * 4, ev(t ^ 1), (t ^ 1) * 8][..n].to_vec();
+                cs.push(cc(wm, w, b.clone(), &outs, &f));
+                cs.push(cc(rm, r, b, &outs, &f));
+            }
+        }
+    }
     run_cs_cases("ds_lds_b64", &cs);
 }
 

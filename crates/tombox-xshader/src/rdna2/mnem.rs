@@ -395,6 +395,7 @@ pub fn lookup(enc: Enc, op: u32) -> Option<&'static str> {
             0x0f => Some("ds_write2st64_b32"),
             0x4d => Some("ds_write_b64"), 0x4e => Some("ds_write2_b64"),
             0x4f => Some("ds_write2st64_b64"), 0x76 => Some("ds_read_b64"), 0x77 => Some("ds_read2_b64"), 0x78 => Some("ds_read2st64_b64"),
+            0xde => Some("ds_write_b96"), 0xdf => Some("ds_write_b128"), 0xfe => Some("ds_read_b96"), 0xff => Some("ds_read_b128"),
             0xb2 => Some("ds_permute_b32"), 0xb3 => Some("ds_bpermute_b32"),
             0x01 => Some("ds_sub_u32"), 0x02 => Some("ds_rsub_u32"), 0x03 => Some("ds_inc_u32"), 0x04 => Some("ds_dec_u32"),
             0x05 => Some("ds_min_i32"), 0x06 => Some("ds_max_i32"), 0x10 => Some("ds_cmpst_b32"),
