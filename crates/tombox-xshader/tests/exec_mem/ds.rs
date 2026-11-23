@@ -325,6 +325,47 @@ fn ds_lds_mskor_wrxchg2() {
 }
 
 #[test]
+fn ds_lds_src2_compute() {
+    let mut cs = Vec::new();
+    type Op = fn(u32, u32) -> u32;
+    let ops: [(&'static str, u32, Op); 13] = [
+        ("ds_add_src2_u32", 0x80, |o, x| o.wrapping_add(x)),
+        ("ds_sub_src2_u32", 0x81, |o, x| o.wrapping_sub(x)),
+        ("ds_rsub_src2_u32", 0x82, |o, x| x.wrapping_sub(o)),
+        ("ds_inc_src2_u32", 0x83, |o, x| if o >= x { 0 } else { o + 1 }),
+        ("ds_dec_src2_u32", 0x84, |o, x| if o == 0 || o > x { x } else { o - 1 }),
+        ("ds_min_src2_i32", 0x85, |o, x| (o as i32).min(x as i32) as u32),
+        ("ds_max_src2_i32", 0x86, |o, x| (o as i32).max(x as i32) as u32),
+        ("ds_min_src2_u32", 0x87, |o, x| o.min(x)),
+        ("ds_max_src2_u32", 0x88, |o, x| o.max(x)),
+        ("ds_and_src2_b32", 0x89, |o, x| o & x),
+        ("ds_or_src2_b32", 0x8a, |o, x| o | x),
+        ("ds_xor_src2_b32", 0x8b, |o, x| o ^ x),
+        ("ds_write_src2_b32", 0x8d, |_o, x| x),
+    ];
+    for &(m, op, f) in &ops {
+        for &(off_field, bbyte) in &[(0x0040u32, 0x0100u32), (0x7fc0u32, 0x7f00u32)] {
+            let a = ds(op, off_field, 1, 0, 0, 0);
+            let mut b = ds(0x0d, 0, 1, 4, 0, 0).to_vec();
+            b.extend_from_slice(&ds(0x0d, bbyte, 1, 2, 0, 0));
+            b.extend_from_slice(&a);
+            b.extend_from_slice(&ds(0x36, 0, 1, 0, 0, 10));
+            cs.push(cc(m, a, b, &[10], &move |t| vec![f(ev(t), dv(t))]));
+        }
+        for &(k, bbyte) in &[(64u32, 0x0100u32), (0x7fc0u32, 0x7f00u32)] {
+            let a = ds(op, 0x8000, 13, 0, 0, 0);
+            let mut b = vec![vop2(0x1c, 13, LIT, v(1)), k << 17];
+            b.extend_from_slice(&ds(0x0d, 0, 13, 4, 0, 0));
+            b.extend_from_slice(&ds(0x0d, bbyte, 13, 2, 0, 0));
+            b.extend_from_slice(&a);
+            b.extend_from_slice(&ds(0x36, 0, 13, 0, 0, 10));
+            cs.push(cc(m, a, b, &[10], &move |t| vec![f(ev(t), dv(t))]));
+        }
+    }
+    run_cs_cases("ds_lds_src2", &cs);
+}
+
+#[test]
 fn ds_lds_b64_compute() {
     let mut cs = Vec::new();
     let nb = |t: u32| t ^ 1;

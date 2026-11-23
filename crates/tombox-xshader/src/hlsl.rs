@@ -4259,6 +4259,63 @@ impl<'a> Emitter<'a> {
             Enc::Ds
                 if self.is_cs
                     && matches!(
+                        m,
+                        "ds_add_src2_u32"
+                            | "ds_sub_src2_u32"
+                            | "ds_rsub_src2_u32"
+                            | "ds_inc_src2_u32"
+                            | "ds_dec_src2_u32"
+                            | "ds_min_src2_i32"
+                            | "ds_max_src2_i32"
+                            | "ds_min_src2_u32"
+                            | "ds_max_src2_u32"
+                            | "ds_and_src2_b32"
+                            | "ds_or_src2_b32"
+                            | "ds_xor_src2_b32"
+                            | "ds_write_src2_b32"
+                    ) =>
+            {
+                self.uses_lds = true;
+                self.lds_order(true, true);
+                let off = ins.aux.imm as u32 & 0xffff;
+                let o0 = off & 0xff;
+                let o1 = (off >> 8) & 0xff;
+                let addr = r(&s[0])?;
+                let t = self.tmp;
+                self.tmp += 1;
+                let word = format!("tb_lds[(({addr}) >> 2) & 8191u]");
+                let x = format!("t{t}x");
+                let body = match m {
+                    "ds_add_src2_u32" => format!("InterlockedAdd({word}, {x}, t{t});"),
+                    "ds_min_src2_u32" => format!("InterlockedMin({word}, {x}, t{t});"),
+                    "ds_max_src2_u32" => format!("InterlockedMax({word}, {x}, t{t});"),
+                    "ds_and_src2_b32" => format!("InterlockedAnd({word}, {x}, t{t});"),
+                    "ds_or_src2_b32" => format!("InterlockedOr({word}, {x}, t{t});"),
+                    "ds_xor_src2_b32" => format!("InterlockedXor({word}, {x}, t{t});"),
+                    "ds_write_src2_b32" => format!("InterlockedExchange({word}, {x}, t{t});"),
+                    op => {
+                        let c = format!("t{t}c");
+                        let new = match op {
+                            "ds_sub_src2_u32" => format!("{c} - ({x})"),
+                            "ds_rsub_src2_u32" => format!("({x}) - {c}"),
+                            "ds_min_src2_i32" => format!("asuint(min(asint({c}), asint({x})))"),
+                            "ds_max_src2_i32" => format!("asuint(max(asint({c}), asint({x})))"),
+                            "ds_inc_src2_u32" => format!("(({c} >= ({x})) ? 0u : ({c} + 1u))"),
+                            _ => format!("((({c} == 0u) || ({c} > ({x}))) ? ({x}) : ({c} - 1u))"),
+                        };
+                        format!(
+                            "uint {c} = {word}; [allow_uav_condition] for (uint t{t}i = 0u; t{t}i < 4096u; t{t}i++) {{ uint t{t}p; InterlockedCompareExchange({word}, {c}, {new}, t{t}p); if (t{t}p == {c}) break; {c} = t{t}p; }} t{t} = {c};"
+                        )
+                    }
+                };
+                self.line(&format!(
+                    "uint t{t} = 0u; if (exec_lo & 1u) {{ int t{t}o = (({o1:#x}u & 0x80u) != 0u) ? (int)((({addr}) >> 17u) << 17u) >> 17 : (int)((((({o1:#x}u & 0x7fu) << 8u) | {o0:#x}u) << 17u)) >> 17; uint {x} = tb_lds[((({addr}) + (uint)(t{t}o * 4)) >> 2) & 8191u]; {body} }}"
+                ));
+                Ok(())
+            }
+            Enc::Ds
+                if self.is_cs
+                    && matches!(
                         m.replace("_rtn", "").as_str(),
                         "ds_add_u32"
                             | "ds_sub_u32"

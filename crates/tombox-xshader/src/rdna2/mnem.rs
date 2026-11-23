@@ -408,6 +408,11 @@ pub fn lookup(enc: Enc, op: u32) -> Option<&'static str> {
             0xa2 => Some("ds_read_u8_d16"), 0xa3 => Some("ds_read_u8_d16_hi"), 0xa4 => Some("ds_read_i8_d16"), 0xa5 => Some("ds_read_i8_d16_hi"),
             0xa6 => Some("ds_read_u16_d16"), 0xa7 => Some("ds_read_u16_d16_hi"),
             0x39 => Some("ds_read_i8"), 0x3a => Some("ds_read_u8"), 0x3b => Some("ds_read_i16"), 0x3c => Some("ds_read_u16"),
+            0x80 => Some("ds_add_src2_u32"), 0x81 => Some("ds_sub_src2_u32"), 0x82 => Some("ds_rsub_src2_u32"),
+            0x83 => Some("ds_inc_src2_u32"), 0x84 => Some("ds_dec_src2_u32"), 0x85 => Some("ds_min_src2_i32"),
+            0x86 => Some("ds_max_src2_i32"), 0x87 => Some("ds_min_src2_u32"), 0x88 => Some("ds_max_src2_u32"),
+            0x89 => Some("ds_and_src2_b32"), 0x8a => Some("ds_or_src2_b32"), 0x8b => Some("ds_xor_src2_b32"),
+            0x8d => Some("ds_write_src2_b32"),
             _ => None,
         },
         Enc::Vinterp => match op {
