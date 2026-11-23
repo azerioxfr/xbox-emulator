@@ -484,6 +484,9 @@ fn double_precision_ops() {
         ("v_cmp_class_f64", vec![vopc(0xa8, v(0), 3), vop1(1, 4, 106)], "tb_cmp_class64(v0, v1, v3)"),
         ("v_cmpx_class_f32", vec![vopc(0x98, v(1), 3), vop1(1, 4, v(1))], "tb_cmp_class(v1, v3)"),
         ("v_msad_u8", o(0x171, [v(1), v(2), v(3)]), "((((v2 >> 0u) & 0xffu) == 0u) ? 0u :"),
+        ("v_qsad_pk_u16_u8", o(0x172, [v(0), v(1), v(2)]), "0xffffu) | (("),
+        ("v_mqsad_pk_u16_u8", o(0x173, [v(0), v(1), v(2)]), "== 0u) ? 0u : (max("),
+        ("v_mqsad_u32_u8", o(0x175, [v(0), v(1), v(2)]), "s3 = v5;"),
         ("v_mullit_f32", o(0x150, [v(1), v(2), v(3)]), "-3.402823466e+38"),
     ];
     for (label, mut body, expect) in cases {
@@ -703,4 +706,17 @@ fn vop3p_int16_refuses_modifiers_without_defined_integer_semantics() {
     for op in [0x02, 0x03, 0x07, 0x0a, 0x0b, 0x0d] {
         check("clamp", &program(&vop3p(op, 0, [v(1), v(2), 0], 7, 0, true)), None, &[]);
     }
+}
+
+#[test]
+fn packed_multi_sad_refuses_clamp() {
+    for op in [0x172u32, 0x173] {
+        let mut w = vop3(op, 0, [v(1), v(2), v(4)], 0, 0);
+        w[0] |= 1 << 15;
+        let err = translate(&shader(&program(&w), None)).err().unwrap_or_default();
+        assert!(err.contains("CLAMP on a packed 16-bit multi-SAD is not lowered"), "op {op:#x}: {err}");
+    }
+    let mut w = vop3(0x175, 0, [v(1), v(2), v(4)], 0, 0);
+    w[0] |= 1 << 15;
+    check("v_mqsad_u32_u8 clamp", &program(&w), None, &[]);
 }

@@ -1662,6 +1662,64 @@ fn dw(x: f64) -> [u32; 2] {
     [b as u32, (b >> 32) as u32]
 }
 
+fn sad4(s0: u64, s1: u32, off: u32, masked: bool) -> u32 {
+    (0..4)
+        .map(|k| {
+            let x = ((s0 >> (8 * (off + k))) & 0xff) as i32;
+            let y = ((s1 >> (8 * k)) & 0xff) as i32;
+            if masked && y == 0 { 0 } else { (x - y).unsigned_abs() }
+        })
+        .sum()
+}
+
+fn msad_field(s0: u64, s1: u32, off: u32, c: u32) -> u32 {
+    sad4(s0, s1, off, true).wrapping_add(c)
+}
+
+#[test]
+fn sad_quad_packed() {
+    let mut c = Cases::new();
+    let pk = |s0: u64, s1: u32, s2: u64, masked: bool| -> [u32; 2] {
+        let f: Vec<u32> = (0..4)
+            .map(|k| (sad4(s0, s1, k, masked) + ((s2 >> (16 * k)) as u32 & 0xffff)) & 0xffff)
+            .collect();
+        [f[0] | (f[1] << 16), f[2] | (f[3] << 16)]
+    };
+    let triples: [(u64, u32, u64); 5] = [
+        (0, 0, 0),
+        (0x0807_0605_0403_0201, 0x0403_0201, 0x0004_0003_0002_0001),
+        (0xffff_ffff_ffff_ffff, 0x0102_0304, 0xffff_ffff_ffff_ffff),
+        (0x0000_0000_0000_00ff, 0x0000_0000, 0x8000_0000_8000_0000),
+        (0x5566_7788_1122_3344, 0x00ff_0000, 0x0100_0000_ff00_0000),
+    ];
+    for &(s0, s1, s2) in &triples {
+        let src = [(2, s0 as u32), (3, (s0 >> 32) as u32), (4, s1), (6, s2 as u32), (7, (s2 >> 32) as u32)];
+        vc(&mut c, "v_qsad_pk_u16_u8", &src, &vop3(0x172, 10, [v(2), v(4), v(6)]), &[10, 11], &pk(s0, s1, s2, false));
+        vc(&mut c, "v_mqsad_pk_u16_u8", &src, &vop3(0x173, 10, [v(2), v(4), v(6)]), &[10, 11], &pk(s0, s1, s2, true));
+    }
+    let quads: [(u64, u32, u128); 5] = [
+        (0x0807_0605_0403_0201, 0x0403_0201, 0x0000_0000_0000_0000_0000_0000_0000_0000),
+        (0xffff_ffff_ffff_ffff, 0x0000_0000, 0xffff_ffff_ffff_ffff_ffff_ffff_ffff_ffff),
+        (0x0000_0000_0000_00ff, 0x00ff_00ff, 0x8000_0000_0000_0001_ffff_fffe_0000_0002),
+        (0x5566_7788_1122_3344, 0x00ff_0000, 0x0000_0000_ffff_ffff_0101_0101_7fff_ffff),
+        (0x0102_0304_0506_0708, 0x0807_0605, 0x1111_1111_2222_2222_3333_3333_4444_4444),
+    ];
+    for &(s0, s1, s2) in &quads {
+        let src = [(2, s0 as u32), (3, (s0 >> 32) as u32), (4, s1), (6, s2 as u32), (7, (s2 >> 32) as u32), (8, (s2 >> 64) as u32), (9, (s2 >> 96) as u32)];
+        let e: Vec<u32> = (0..4).map(|k| msad_field(s0, s1, k, ((s2 >> (32 * k)) & 0xffff_ffff) as u32)).collect();
+        vc(&mut c, "v_mqsad_u32_u8", &src, &vop3(0x175, 10, [v(2), v(4), v(6)]), &[10, 11, 12, 13], &e);
+        let ec: Vec<u32> = (0..4)
+            .map(|k| {
+                let cc = ((s2 >> (32 * k)) & 0xffff_ffff) as u32;
+                let t = msad_field(s0, s1, k, cc);
+                if t < cc { 0xffff_ffff } else { t }
+            })
+            .collect();
+        vc(&mut c, "v_mqsad_u32_u8", &src, &vop3m(0x175, 10, [v(2), v(4), v(6)], 0, 0, 0, true), &[10, 11, 12, 13], &ec);
+    }
+    c.run("sad quad");
+}
+
 fn d1(c: &mut Cases, m: &'static str, op: u32, x: f64, out: f64) {
     let [lo, hi] = dw(x);
     let [ol, oh] = dw(out);

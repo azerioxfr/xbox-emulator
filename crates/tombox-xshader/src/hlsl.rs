@@ -5007,6 +5007,89 @@ impl<'a> Emitter<'a> {
             };
             return self.wv(&d, &format!("(({e}) & 0xffffu)"));
         }
+        if matches!(m.as_str(), "v_qsad_pk_u16_u8" | "v_mqsad_pk_u16_u8" | "v_mqsad_u32_u8") {
+            let d = ins.dst.first().cloned().ok_or("no dst")?;
+            let vd = |k: u8| -> Result<Opnd, String> {
+                match d {
+                    Opnd::Vgpr(n) => Ok(Opnd::Vgpr(n + k)),
+                    _ => Err(format!("{m}: wide destination is not a VGPR")),
+                }
+            };
+            let (a0, a1, a2) = (s.get(0).ok_or("missing src0")?, s.get(1).ok_or("missing src1")?, s.get(2).ok_or("missing src2")?);
+            if !matches!(a0, Opnd::Vgpr(_)) {
+                return Err(format!("{m}: src0 must be a 64-bit VGPR pair"));
+            }
+            if !matches!(a2, Opnd::Vgpr(_)) {
+                return Err(format!("{m}: src2 must be a VGPR group"));
+            }
+            let s2w: u8 = if m == "v_mqsad_u32_u8" { 4 } else { 2 };
+            if s2w == 2 && ins.aux.imm != 0 {
+                return Err(format!("{m}: CLAMP on a packed 16-bit multi-SAD is not lowered (the saturation width is not established)"));
+            }
+            let t = self.tmp;
+            self.tmp += 3 + s2w as usize;
+            self.line(&format!("uint t{t}a = {}; uint t{t}b = {}; uint t{t}q = {};", r(a0)?, r(&hi64(a0))?, r(a1)?));
+            self.touch(&hi64(a0));
+            for k in 0..s2w {
+                let o = match a2 {
+                    Opnd::Vgpr(n) => Opnd::Vgpr(n + k),
+                    _ => unreachable!(),
+                };
+                if k != 0 {
+                    self.touch(&o);
+                }
+                self.line(&format!("uint t{t}s{k} = {};", r(&o)?));
+            }
+            let byte = |i: usize| -> String {
+                if i < 4 {
+                    format!("((t{t}a >> {}u) & 0xffu)", 8 * i)
+                } else {
+                    format!("((t{t}b >> {}u) & 0xffu)", 8 * (i - 4))
+                }
+            };
+            let masked = m != "v_qsad_pk_u16_u8";
+            let sad = |off: usize| -> String {
+                (0..4)
+                    .map(|k| {
+                        let (x, y) = (byte(off + k), format!("((t{t}q >> {}u) & 0xffu)", 8 * k));
+                        if masked {
+                            format!("(({y} == 0u) ? 0u : (max({x}, {y}) - min({x}, {y})))")
+                        } else {
+                            format!("(max({x}, {y}) - min({x}, {y}))")
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" + ")
+            };
+            let mut fields = Vec::new();
+            for k in 0..4u8 {
+                let c = if s2w == 4 {
+                    format!("t{t}s{k}")
+                } else {
+                    format!("((t{t}s{} >> {}u) & 0xffffu)", k / 2, 16 * (k % 2))
+                };
+                let sum = sad(k as usize);
+                if ins.aux.imm != 0 {
+                    let q = self.tmp;
+                    self.tmp += 1;
+                    self.line(&format!("uint t{q} = ({sum}) + {c};"));
+                    fields.push(format!("((t{q} < {c}) ? 0xffffffffu : t{q})"));
+                } else {
+                    fields.push(format!("(({sum}) + {c})"));
+                }
+            }
+            if s2w == 4 {
+                for k in 0..4u8 {
+                    self.wv(&vd(k)?, &fields[k as usize])?;
+                }
+            } else {
+                let lo = format!("(({} & 0xffffu) | (({}) << 16))", fields[0], fields[1]);
+                let hi = format!("(({} & 0xffffu) | (({}) << 16))", fields[2], fields[3]);
+                self.wv(&vd(0)?, &lo)?;
+                self.wv(&vd(1)?, &hi)?;
+            }
+            return Ok(());
+        }
         if matches!(m.as_str(), "v_sad_u8" | "v_sad_hi_u8" | "v_sad_u16" | "v_sad_u32" | "v_msad_u8") {
             let (a, b, c) = (r(&s[0])?, r(&s[1])?, r(&s[2])?);
             let ad = |x: String, y: String| format!("(max({x}, {y}) - min({x}, {y}))");
