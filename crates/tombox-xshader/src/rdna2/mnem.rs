@@ -386,7 +386,7 @@ pub fn lookup(enc: Enc, op: u32) -> Option<&'static str> {
             0x07 => Some("ds_min_u32"), 0x08 => Some("ds_max_u32"), 0x09 => Some("ds_and_b32"),
             0x0a => Some("ds_or_b32"), 0x0b => Some("ds_xor_b32"),
             0x27 => Some("ds_min_rtn_u32"), 0x28 => Some("ds_max_rtn_u32"), 0x29 => Some("ds_and_rtn_b32"),
-            0x2a => Some("ds_or_rtn_b32"), 0x2b => Some("ds_xor_rtn_b32"),
+            0x2a => Some("ds_or_rtn_b32"), 0x2b => Some("ds_xor_rtn_b32"), 0x34 => Some("ds_wrap_rtn_b32"),
             0x0d => Some("ds_write_b32"),
             0x0e => Some("ds_write2_b32"),
             0x36 => Some("ds_read_b32"),

@@ -4275,6 +4275,7 @@ impl<'a> Emitter<'a> {
                             | "ds_wrxchg_b32"
                             | "ds_cmpst_b32"
                             | "ds_mskor_b32"
+                            | "ds_wrap_b32"
                     ) =>
             {
                 // Atomic read-modify-write on group-shared memory (the `_rtn` forms also
@@ -4304,6 +4305,7 @@ impl<'a> Emitter<'a> {
                             "ds_max_i32" => format!("asuint(max(asint({c}), asint({x0})))"),
                             "ds_inc_u32" => format!("(({c} >= ({x0})) ? 0u : ({c} + 1u))"),
                             "ds_mskor_b32" => format!("(({c} & ~({x0})) | ({}))", r(&s[2])?),
+                            "ds_wrap_b32" => format!("(({c} >= ({x0})) ? ({c} - ({x0})) : ({c} + ({})))", r(&s[2])?),
                             _ => format!("((({c} == 0u) || ({c} > ({x0}))) ? ({x0}) : ({c} - 1u))"),
                         };
                         format!(

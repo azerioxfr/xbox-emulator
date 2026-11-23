@@ -321,6 +321,19 @@ fn ds_lds_mskor_wrxchg2() {
     b.extend_from_slice(&x);
     b.extend_from_slice(&ds(0x37, 0x0100, 6, 0, 0, 12));
     cs.push(cc("ds_wrxchg2_rtn_b32", x, b, &[14, 15, 12, 13], &|t| vec![dv(t), ev(t), ev(nb(t)), nb(t)]));
+    for (k, &(old, d0, d1)) in [(2u32, 4u32, 7u32), (4, 2, 0), (0, 13, 4), (13, 0, 2), (7, 0, 4), (4, 4, 2)].iter().enumerate() {
+        let off = if k % 2 == 0 { 0 } else { 0x104 };
+        let want = move |t: u32| {
+            let (m, a, b) = (reg_val(old, t), reg_val(d0, t), reg_val(d1, t));
+            if m >= a { m.wrapping_sub(a) } else { m.wrapping_add(b) }
+        };
+        let a = ds(0x34, off, 1, d0, d1, 11);
+        let mut b = vec![vop1(1, 13, ic(0)), vop1(1, 11, v(4))];
+        b.extend_from_slice(&ds(0x0d, off, 1, old, 0, 0));
+        b.extend_from_slice(&a);
+        b.extend_from_slice(&ds(0x36, off, 3, 0, 0, 10));
+        cs.push(cc("ds_wrap_rtn_b32", a, b, &[11, 10], &move |t| vec![reg_val(old, t), want(nb(t))]));
+    }
     run_cs_cases("ds_lds_mskor_wrxchg2", &cs);
 }
 
