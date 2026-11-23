@@ -95,7 +95,16 @@ Last update: 2026-11-22 (Trackmania title menu draws).
   - Recording costs about 8 us per op. The Fortnite harness takes 1.5-2.1 s with recording, against 0.6 s without.
   - Fixed: the XDefiant replay mismatch. The packet cache was not cleared when APU memory was freed. Same-build record and replay now match for all three titles.
 
-### 🟨 System functions: 33 of 671 unfinished
+### ✅ System functions: 33 of 671 unfinished at run 35, all covered now
+- CLOSED 2026-11-23: the count is stale. `tools/progress/summary.json` reports `system_functions 671/671` (100%), and each function this list named has an `implemented` or `forwarded` row in the generated map:
+  - **xmem:** `XMemTransferMemory` and `XMemFreePhysicalPages` are implemented, and the map reads "xmem.dll: 36 console-only exports, 36 covered" (the named tests are `stats::transfer_memory_follows_console_flow` and `virt::free_physical_pages_matches_console_chunking`).
+  - **d3d12_xs:** `D3D12XboxSetProcessDebugFlags` is implemented with the 0x1010 semantics (7b2f86d, `tests/process_debug_19041.rs`).
+  - **XAudio2_9.dll:** ordinals #1, #2, #4, #5 and #6 are `implemented`/`forwarded` (`crates/compat/xaudio2_9/map_exports.txt`; `tests/oracle.rs`, `tests/cdylib.rs`).
+  - **AcpHal:** the map reads "AcpHal.dll: 6 functions; implemented 6".
+  - **MFPlat.DLL / MFReadWrite.dll:** the 16 + 2 rows go through the compat forwarders, and the map reads "mfplat.dll: 8 console-only exports, 8 covered" (7b2f86d).
+  - **GameChat2.dll:** runs on PC with all 14 imports plus the codec tone round trip; the console-mode family switch below is still open.
+- Not re-verified: whether a title now calls the 14 MFPlat source-reader functions. No run was made for this audit, so the run-35 observation below still stands.
+- The run-35 list, unchanged:
 - **xmem:** XMemTransferMemory, XMemFreePhysicalPages.
 - **d3d12_xs:** D3D12XboxSetProcessDebugFlags.
 - **XAudio2_9.dll:** ordinals #1, #2, #4, #5, #6.
