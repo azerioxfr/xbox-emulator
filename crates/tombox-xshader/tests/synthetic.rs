@@ -530,6 +530,32 @@ fn geometry_adjacency_primitives_translate() {
     assert!(err.contains("input primitive"), "{err}");
 }
 
+fn geometry_sendmsg(simm16: u32) -> Result<tombox_xshader::hlsl::Translated, String> {
+    let mut ex = shader(
+        Stage::Geometry,
+        &[0xbf90_0000 | simm16, S_ENDPGM],
+        vec![sig("POSITION", 0, 3, 0, 0xf)],
+        vec![sig("SV_Position", 1, 3, 0, 0xf)],
+        None,
+    );
+    ex.gs_info = Some(GsInfo { input_primitive: 1, output_topology: 1, max_vertex_count: 1, mesh: None });
+    translate(&ex)
+}
+
+#[test]
+fn geometry_emit_and_cut_on_streams_1_to_3_are_refused() {
+    for stream in 1..4u32 {
+        for op in [1u32, 2, 3] {
+            let err = match geometry_sendmsg(2 | (op << 4) | (stream << 8)) {
+                Err(e) => e,
+                Ok(_) => panic!("GS op {op} on stream {stream} must not translate"),
+            };
+            assert!(err.contains("GS output stream != 0 unsupported"), "stream {stream} op {op}: {err}");
+        }
+    }
+    geometry_sendmsg(3).expect("GS_DONE translates");
+}
+
 fn compute_threads(threads: Option<[u32; 3]>, preamble: [u32; 4]) -> String {
     let mut ex = shader(Stage::Compute, &[S_ENDPGM], vec![], vec![], None);
     ex.psv_numthreads = threads;
