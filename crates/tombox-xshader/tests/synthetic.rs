@@ -736,6 +736,35 @@ fn unmapped_position_export_without_clip_or_cull_distance_is_ignored() {
     }
 }
 
+fn exp(target: u32) -> [u32; 2] {
+    [0xf800_0000 | (target << 4) | 0xf | (1 << 10), 0x0302_0100]
+}
+
+#[test]
+fn ps_export_target_above_mrt7_is_refused() {
+    let ok = shader(Stage::Pixel, &[exp(0)[0], exp(0)[1], S_ENDPGM], vec![], vec![sig("SV_Target", 64, 3, 0, 0xf)], None);
+    translate(&ok).expect("mrt0 export translates");
+    let ex = shader(Stage::Pixel, &[exp(10)[0], exp(10)[1], S_ENDPGM], vec![], vec![sig("SV_Target", 64, 3, 0, 0xf)], None);
+    let err = match translate(&ex) {
+        Ok(t) => panic!("expected refusal, got:\n{}", t.hlsl),
+        Err(e) => e,
+    };
+    assert!(err.starts_with("PS export target 10 unsupported"), "{err}");
+}
+
+#[test]
+fn non_pixel_export_target_outside_position_and_parameters_is_refused() {
+    let out = || vec![sig("PRIMITIVE_ID", 0, 1, 0, 0x1)];
+    let ok = shader(Stage::Vertex, &[0xf800_0207, 0x0000_0000, S_ENDPGM], vec![], out(), None);
+    translate(&ok).expect("param0 export translates");
+    let ex = shader(Stage::Vertex, &[exp(10)[0], exp(10)[1], S_ENDPGM], vec![], out(), None);
+    let err = match translate(&ex) {
+        Ok(t) => panic!("expected refusal, got:\n{}", t.hlsl),
+        Err(e) => e,
+    };
+    assert!(err.starts_with("export target 10 unsupported"), "{err}");
+}
+
 #[test]
 fn image_atomic_64bit_emits_uint64_uav_and_sm66() {
     let words = [
