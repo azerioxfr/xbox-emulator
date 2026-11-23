@@ -784,6 +784,47 @@ fn mesh_alloc_and_lds_refusals() {
 }
 
 #[test]
+fn mesh_export_and_entry_count_refusals_are_explicit() {
+    let base = console_ms(3, 1, 0);
+    let with = |extra: [u32; 2]| {
+        let mut w = base.clone();
+        w.extend(extra);
+        w
+    };
+    let e = translate(&ms(&with(exp(21, 0x1, false, [0, 0, 0, 0])), mesh_info(128, 128, 128, 2), pos_param_outs())).err().expect("refusal");
+    assert!(e.contains("mesh export target 21 unsupported"), "{e}");
+    let e = translate(&ms(&with(exp(13, 0x1, false, [0, 0, 0, 0])), mesh_info(128, 128, 128, 2), pos_param_outs())).err().expect("refusal");
+    assert!(e.contains("position export 13.x has no clip/cull distance element"), "{e}");
+    let layer = vec![sig("SV_Position", 1, 3, 0, 0xf), sig("SV_ViewportArrayIndex", 5, 1, 1, 0x1)];
+    let e = translate(&ms(&with(exp(13, 0x1, false, [0, 0, 0, 0])), mesh_info(128, 128, 128, 2), layer)).err().expect("refusal");
+    assert!(e.contains("position-export misc vector unsupported"), "{e}");
+    let clip = vec![sig("SV_Position", 1, 3, 0, 0xf), sig("SV_ClipDistance", 2, 3, 1, 0x3)];
+    let t = translate(&ms(&with(exp(13, 0x3, false, [0, 0, 0, 1])), mesh_info(128, 128, 128, 2), clip)).expect("clip-distance export 13");
+    assert!(t.hlsl.contains("o.o1"), "{}", t.hlsl);
+    let e = translate(&ms(&base, mesh_info(128, 0, 1, 2), pos_param_outs())).err().expect("refusal");
+    assert!(e.contains("mesh shader with max vertices 0 / primitives 1"), "{e}");
+    let mut mi = mesh_info(128, 128, 128, 2);
+    mi.prim_vectors = 1;
+    let mut ex = ms(&base, mi, pos_param_outs());
+    ex.prim_sig = vec![sig("SV_PrimitiveID", 8, 1, 0, 0x1)];
+    let e = translate(&ex).err().expect("refusal");
+    assert!(e.contains("per-primitive system values unsupported"), "{e}");
+    let mut w = base.clone();
+    let end = w.len() - 1;
+    w.splice(end..end, [0xd834_0000, 0x0000_0100]);
+    let e = translate(&ms(&w, mesh_info(192, 3, 1, 2), pos_param_outs())).err().expect("refusal");
+    assert!(e.contains("mesh shader with 192 threads and LDS unsupported"), "{e}");
+    let mut w = base.clone();
+    let end = w.len() - 1;
+    w.splice(end..end, [0xd834_ffff, 0x0000_0100]);
+    let e = translate(&ms(&w, mesh_info(128, 3, 1, 2), pos_param_outs())).err().expect("refusal");
+    assert!(e.contains("LDS offset 65551 beyond the PC groupshared limit"), "{e}");
+    let bare = vec![sop1(3, M0, LIT), 0x40018, sopp(0x10, 9), S_ENDPGM];
+    let e = translate(&ms(&bare, mesh_info(128, 3, 1, 2), Vec::new())).err().expect("refusal");
+    assert!(e.contains("mesh shader without vertex outputs"), "{e}");
+}
+
+#[test]
 fn mesh_divergent_barrier_with_memory_store_is_refused() {
     let mut w = console_ms_b(67, 1, TRI, true);
     let end = w.len() - 1;
