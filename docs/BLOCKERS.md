@@ -1157,8 +1157,8 @@ elease`, the log shows one install and every interface is emulated.
 - **Still missing** (all are d3d12_xs / tombox-xshader gaps, not console-only):
   - The next xdxr compute shader (hash 07edd3df1713c3c0) reads and writes global memory through a 64-bit GPU VA. d3d12_xs refuses that (`global_bind::refusal`): it has no TbGlobal window table or GPU-VA-to-resource map yet. This is the same gap as the mesh and amplification ring stores above.
   - Translating every xdxr compute shader standalone also shows these refusals:
-    - `ds_swizzle outside a pixel shader`, 6 shaders per image;
-    - `atomic MUBUF addressing unsupported` (buffer_atomic_add with an SGPR SOFFSET);
+    - FIXED 2026-11-22 (translator side, xdxr shaders not rerun): `ds_swizzle outside a pixel shader`, 6 shaders per image. Compute shaders now lower `ds_swizzle_b32` in every mode (3828799, `emit_ds_permute`; test `exec_mem::ds::ds_swizzle_compute`), except a compute shader that also uses LDS, which still stops in `xlane_header`;
+    - FIXED 2026-11-22 (translator side, xdxr shaders not rerun): `atomic MUBUF addressing unsupported` (buffer_atomic_add with an SGPR SOFFSET). Buffer atomics now add SOFFSET (c852615);
     - root-memory dwords outside the embedded root signature.
   - Until these are done, XDXRCreateDevice cannot finish on PC, and the `creates_a_device...` and `state_object_links...` tests fail for all three DLLs.
 - **Related, FIXED (scdxil lib tests, access violation):**
