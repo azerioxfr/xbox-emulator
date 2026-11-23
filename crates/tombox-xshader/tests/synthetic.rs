@@ -445,6 +445,27 @@ fn image_ops_with_status_or_r128_bits_are_refused() {
 }
 
 #[test]
+fn depth_compare_sample_with_explicit_bias_or_gradient_is_refused() {
+    let root = || Some(RootSig { version: 2, flags: 1, params: vec![table(0, 64, 5), table(3, 16, 5)], num_static_samplers: 0, static_samplers: Vec::new() });
+    let mimg = |op: u32| 0xf000_0000u32 | (op << 18) | (op >> 7) | 8 | (0xf << 8);
+    let program = |op: u32| vec![0xf40c_0004, 0xfa00_0000, 0xf408_0305, 0xfa00_0000, mimg(op), 0x0060_0400, S_NOP, S_NOP, PACK_V0_V2_V2, PACK_V1_V2_V2, EXP_MRT0_COMPR[0], EXP_MRT0_COMPR[1], S_ENDPGM];
+    let out = || vec![sig("SV_Target", 64, 3, 0, 0xf)];
+    let t = translate(&shader(Stage::Pixel, &program(0x2f), vec![], out(), root())).expect("depth-compare sample at LOD zero");
+    assert!(t.hlsl.contains("SampleCmpLevelZero") && t.hlsl.contains("SamplerComparisonState scmp0 : register(s0);"), "{}", t.hlsl);
+    assert!(t.hlsl.contains("Texture2D<float4> tex0 : register(t0);"), "{}", t.hlsl);
+    let t = translate(&shader(Stage::Pixel, &program(0x25), vec![], out(), root())).expect("texture sample with an explicit bias");
+    assert!(t.hlsl.contains("SampleBias("), "{}", t.hlsl);
+    let t = translate(&shader(Stage::Pixel, &program(0x2c), vec![], out(), root())).expect("depth-compare sample at an explicit LOD");
+    assert!(t.hlsl.contains("SampleCmpLevel("), "{}", t.hlsl);
+    let t = translate(&shader(Stage::Pixel, &program(0x28), vec![], out(), root())).expect("depth-compare sample with implicit LOD");
+    assert!(t.hlsl.contains(".SampleCmp("), "{}", t.hlsl);
+    for op in [0x29u32, 0x2a, 0x2b, 0x2d, 0x2e] {
+        let e = translate(&shader(Stage::Pixel, &program(op), vec![], out(), root())).err().unwrap_or_else(|| panic!("{op:#x} translated"));
+        assert!(e.contains("depth-compare sample with explicit LOD/bias/gradient unsupported in SM5"), "{e}");
+    }
+}
+
+#[test]
 fn durango_vertex_fetch_call_synthesizes_attributes_from_input_signature() {
     let words = [0xbe80_2100, 0xf800_00cf, 0x0706_0504, S_ENDPGM];
     let pos_in = sig("POSITION", 0, 3, 0, 0xf);
