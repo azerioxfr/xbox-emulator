@@ -536,6 +536,8 @@ struct Emitter<'a> {
     /// UAV texture slots used with image atomics (declared `<uint>`).
     uav_uint: BTreeSet<u32>,
     uav_u64: BTreeSet<u32>,
+    tbuf_u64: BTreeSet<u32>,
+    sbuf_u64: BTreeSet<u32>,
     /// The shader uses wave intrinsics (needs shader model 6: DXC only).
     uses_wave: bool,
     wave64: bool,
@@ -1266,6 +1268,8 @@ fn translate_with(ex: &ShaderExtract, out_interp: &InputInterp, user_base_overri
         multi_sets: Vec::new(),
         uav_uint: BTreeSet::new(),
         uav_u64: BTreeSet::new(),
+        tbuf_u64: BTreeSet::new(),
+        sbuf_u64: BTreeSet::new(),
         uses_wave: false,
         wave64,
         msel: HashMap::new(),
@@ -1378,7 +1382,7 @@ fn translate_with(ex: &ShaderExtract, out_interp: &InputInterp, user_base_overri
         (_, Some("ms")) => "ms_6_8",
         _ => profile,
     };
-    Ok(Translated { hlsl, entry: "main", profile, mip_uavs: em.uav_mips.iter().copied().collect(), mip_srvs: em.tex_mips.iter().copied().collect(), needs_gmem: em.uses_bvh, needs_global: em.uses_global, uses_typed_atomic64: !em.uav_u64.is_empty(), user_data_base: em.ud_active().then(|| em.user_base()), cb_limits: em.cb_limits(), fmask: em.fmask_loc.iter().copied().collect() })
+    Ok(Translated { hlsl, entry: "main", profile, mip_uavs: em.uav_mips.iter().copied().collect(), mip_srvs: em.tex_mips.iter().copied().collect(), needs_gmem: em.uses_bvh, needs_global: em.uses_global, uses_typed_atomic64: !em.uav_u64.is_empty() || !em.tbuf_u64.is_empty() || !em.sbuf_u64.is_empty(), user_data_base: em.ud_active().then(|| em.user_base()), cb_limits: em.cb_limits(), fmask: em.fmask_loc.iter().copied().collect() })
 }
 
 impl<'a> Emitter<'a> {
@@ -1690,6 +1694,8 @@ impl<'a> Emitter<'a> {
             self.sbuf.clone(),
             self.tbuf.clone(),
             self.tbuf_uint.clone(),
+            self.tbuf_u64.clone(),
+            self.sbuf_u64.clone(),
         );
         let mut first_err: Option<String> = None;
         let mut states: Vec<Option<State>> = vec![None; ranges.len()];
@@ -1759,7 +1765,7 @@ impl<'a> Emitter<'a> {
                 }
             }
         }
-        (self.res, self.cb_size, self.tex, self.samp, self.samp_cmp, self.uav, self.sbuf, self.tbuf, self.tbuf_uint) = saved;
+        (self.res, self.cb_size, self.tex, self.samp, self.samp_cmp, self.uav, self.sbuf, self.tbuf, self.tbuf_uint, self.tbuf_u64, self.sbuf_u64) = saved;
 
         // TB_DFDEBUG=<sgpr>: print that register's symbol at every block entry (diagnostics).
         if let Some(reg) = std::env::var("TB_DFDEBUG").ok().and_then(|v| v.parse::<u16>().ok()) {
@@ -2141,17 +2147,33 @@ impl<'a> Emitter<'a> {
             if !is_uav {
                 return Err(format!("mubuf at {:#x}: atomic on a non-UAV buffer", ins.offset));
             }
+            let x2 = ins.mnemonic.ends_with("_x2");
             // PSV0 tells typed (6) from structured (8) UAVs. Atomics need a uint element, so
             // a typed UAV used atomically is declared RWBuffer<uint>.
             let (reg, space) = (slot & 0xffff, slot >> 16);
             let structured = slot & BINDLESS != 0 || self.ex.resources.iter().any(|p| matches!(p.res_type, 7 | 8 | 9) && p.space == space && p.lower <= reg && reg <= p.upper);
             if structured {
+                if x2 {
+                    self.sbuf_u64.insert(slot);
+                } else if self.sbuf_u64.contains(&slot) {
+                    return Err(format!("mubuf at {:#x}: structured buffer slot {slot} mixes 32-bit and 64-bit atomics", ins.offset));
+                }
                 let e = self.sbuf.entry((true, slot)).or_insert(0);
-                *e = (*e).max(ins.aux.imm as u32 / 4 + 1);
+                *e = (*e).max(ins.aux.imm as u32 / 4 + if x2 { 2 } else { 1 });
                 return Ok(Res::Buf(slot, true));
             }
             self.tbuf.insert((true, slot));
-            self.tbuf_uint.insert(slot);
+            if x2 {
+                if self.tbuf_uint.contains(&slot) {
+                    return Err(format!("mubuf at {:#x}: typed buffer slot {slot} mixes 32-bit and 64-bit atomics", ins.offset));
+                }
+                self.tbuf_u64.insert(slot);
+            } else {
+                if self.tbuf_u64.contains(&slot) {
+                    return Err(format!("mubuf at {:#x}: typed buffer slot {slot} mixes 32-bit and 64-bit atomics", ins.offset));
+                }
+                self.tbuf_uint.insert(slot);
+            }
             return Ok(Res::TBuf(slot, true));
         }
         if ins.mnemonic.contains("_format_") {
@@ -5588,32 +5610,61 @@ impl<'a> Emitter<'a> {
                 (Some(v), Some(s)) => Some(format!("({v}) + ({s})")),
             };
             let imm = ins.aux.imm as u32;
-            let target = match (self.res.get(&idx).and_then(|v| v.first()).copied(), dyn_off) {
-                (Some(Res::TBuf(slot, true)), None) if imm == 0 => format!("utb{slot}[{index}]"),
-                (Some(Res::TBuf(slot, true)), None) if imm % 4 == 0 => format!("utb{slot}[{index} + {}u]", imm / 4),
-                (Some(Res::TBuf(slot, true)), Some(d)) if !idxen => format!("utb{slot}[(({d}) + {imm:#x}u) >> 2]"),
-                (Some(Res::TBuf(slot, true)), Some(d)) => format!("utb{slot}[{index} + ((({d}) + {imm:#x}u) >> 2)]"),
-                (Some(Res::Buf(slot, true)), None) => {
-                    let (nwords, w) = (self.sbuf_words((true, slot)), imm / 4);
-                    format!("ubuf{slot}[{index} + {}u].w[{}]", w / nwords, w % nwords)
+            let op_full = ins.mnemonic.strip_prefix("buffer_atomic_").ok_or_else(|| format!("{} unsupported", ins.mnemonic))?;
+            let is_x2 = op_full.ends_with("_x2");
+            let op = if is_x2 { &op_full[..op_full.len() - 3] } else { op_full };
+            let res0 = self.res.get(&idx).and_then(|v| v.first()).copied();
+            let target = if is_x2 {
+                match (res0, dyn_off.as_deref()) {
+                    (Some(Res::TBuf(slot, true)), None) if imm == 0 => format!("utb{slot}[{index}]"),
+                    (Some(Res::TBuf(slot, true)), None) if imm % 8 == 0 => format!("utb{slot}[{index} + {}u]", imm / 8),
+                    (Some(Res::TBuf(slot, true)), Some(d)) if !idxen => format!("utb{slot}[(({d}) + {imm:#x}u) >> 3]"),
+                    (Some(Res::TBuf(slot, true)), Some(d)) => format!("utb{slot}[{index} + ((({d}) + {imm:#x}u) >> 3)]"),
+                    (Some(Res::Buf(slot, true)), None) => format!("ubuf{slot}[{index} + {}u]", imm / 8),
+                    (Some(Res::Buf(slot, true)), Some(d)) if !idxen => format!("ubuf{slot}[(({d}) + {imm:#x}u) >> 3]"),
+                    (Some(Res::Buf(slot, true)), Some(d)) => format!("ubuf{slot}[{index} + ((({d}) + {imm:#x}u) >> 3)]"),
+                    _ => return Err("unresolved atomic target".into()),
                 }
-                (Some(Res::Buf(slot, true)), Some(d)) if !idxen => {
-                    let nwords = self.sbuf_words((true, slot));
-                    let w = format!("((({d}) + {imm:#x}u) >> 2)");
-                    format!("ubuf{slot}[{w} / {nwords}u].w[{w} % {nwords}u]")
+            } else {
+                match (res0, dyn_off.as_deref()) {
+                    (Some(Res::TBuf(slot, true)), None) if imm == 0 => format!("utb{slot}[{index}]"),
+                    (Some(Res::TBuf(slot, true)), None) if imm % 4 == 0 => format!("utb{slot}[{index} + {}u]", imm / 4),
+                    (Some(Res::TBuf(slot, true)), Some(d)) if !idxen => format!("utb{slot}[(({d}) + {imm:#x}u) >> 2]"),
+                    (Some(Res::TBuf(slot, true)), Some(d)) => format!("utb{slot}[{index} + ((({d}) + {imm:#x}u) >> 2)]"),
+                    (Some(Res::Buf(slot, true)), None) => {
+                        let (nwords, w) = (self.sbuf_words((true, slot)), imm / 4);
+                        format!("ubuf{slot}[{index} + {}u].w[{}]", w / nwords, w % nwords)
+                    }
+                    (Some(Res::Buf(slot, true)), Some(d)) if !idxen => {
+                        let nwords = self.sbuf_words((true, slot));
+                        let w = format!("((({d}) + {imm:#x}u) >> 2)");
+                        format!("ubuf{slot}[{w} / {nwords}u].w[{w} % {nwords}u]")
+                    }
+                    (Some(Res::Buf(slot, true)), Some(d)) => {
+                        let nwords = self.sbuf_words((true, slot));
+                        let w = format!("((({d}) + {imm:#x}u) >> 2)");
+                        format!("ubuf{slot}[{index} + {w} / {nwords}u].w[{w} % {nwords}u]")
+                    }
+                    _ => return Err("unresolved atomic target".into()),
                 }
-                (Some(Res::Buf(slot, true)), Some(d)) => {
-                    let nwords = self.sbuf_words((true, slot));
-                    let w = format!("((({d}) + {imm:#x}u) >> 2)");
-                    format!("ubuf{slot}[{index} + {w} / {nwords}u].w[{w} % {nwords}u]")
-                }
-                _ => return Err("unresolved atomic target".into()),
             };
             let vdata = ins.dst[0];
-            let op = ins.mnemonic.strip_prefix("buffer_atomic_").ok_or_else(|| format!("{} unsupported", ins.mnemonic))?;
-            let old = self.atomic_rmw(op, &target, vdata).map_err(|_| format!("{} unsupported", ins.mnemonic))?;
-            if glc {
-                self.wv(&vdata, &old)?;
+            if is_x2 {
+                self.sm6_minor = self.sm6_minor.max(6);
+                let vd = match vdata {
+                    Opnd::Vgpr(v) => v,
+                    _ => return Err("bad vdata".into()),
+                };
+                let old = self.atomic_rmw64(op, &target, vd).map_err(|_| format!("{} unsupported", ins.mnemonic))?;
+                if glc {
+                    self.wv(&Opnd::Vgpr(vd), &format!("(uint){old}"))?;
+                    self.wv(&Opnd::Vgpr(vd + 1), &format!("(uint)({old} >> 32)"))?;
+                }
+            } else {
+                let old = self.atomic_rmw(op, &target, vdata).map_err(|_| format!("{} unsupported", ins.mnemonic))?;
+                if glc {
+                    self.wv(&vdata, &old)?;
+                }
             }
             return Ok(());
         }
@@ -7034,6 +7085,10 @@ impl<'a> Emitter<'a> {
             h.push_str(&self.decl(&mut used, "SamplerComparisonState", &format!("scmp{slot}"), *slot, 's', 3, 16)?);
         }
         for (is_uav, slot) in self.sbuf.keys() {
+            if *is_uav && self.sbuf_u64.contains(slot) {
+                h.push_str(&self.decl(&mut used, "RWStructuredBuffer<uint64_t>", &format!("ubuf{slot}"), *slot, 'u', 1, 32)?);
+                continue;
+            }
             let (ty, nm, reg) = if *is_uav { ("RWStructuredBuffer", "ubuf", 'u') } else { ("StructuredBuffer", "sbuf", 't') };
             let _ = writeln!(h, "struct TbElem_{nm}{slot} {{ uint w[{}]; }};
 ", self.sbuf_words((*is_uav, *slot)));
@@ -7045,7 +7100,9 @@ impl<'a> Emitter<'a> {
             }
         }
         for (is_uav, slot) in &self.tbuf {
-            let _ = if *is_uav && self.tbuf_uint.contains(slot) {
+            let _ = if *is_uav && self.tbuf_u64.contains(slot) {
+                self.decl(&mut used, "RWBuffer<uint64_t>", &format!("utb{slot}"), *slot, 'u', 1, 32).map(|d| h.push_str(&d))
+            } else if *is_uav && self.tbuf_uint.contains(slot) {
                 self.decl(&mut used, "RWBuffer<uint>", &format!("utb{slot}"), *slot, 'u', 1, 32).map(|d| h.push_str(&d))
             } else {
                 let e = match self.tbuf_ty.get(&(*is_uav, *slot)) {

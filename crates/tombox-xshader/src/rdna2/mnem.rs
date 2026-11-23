@@ -334,6 +334,11 @@ pub fn mubuf(op: u32) -> Option<&'static str> {
         0x37 => "buffer_atomic_smax", 0x38 => "buffer_atomic_umax", 0x39 => "buffer_atomic_and",
         0x3a => "buffer_atomic_or", 0x3b => "buffer_atomic_xor", 0x3c => "buffer_atomic_inc",
         0x3d => "buffer_atomic_dec",
+        0x50 => "buffer_atomic_swap_x2", 0x51 => "buffer_atomic_cmpswap_x2", 0x52 => "buffer_atomic_add_x2",
+        0x53 => "buffer_atomic_sub_x2", 0x55 => "buffer_atomic_smin_x2", 0x56 => "buffer_atomic_umin_x2",
+        0x57 => "buffer_atomic_smax_x2", 0x58 => "buffer_atomic_umax_x2", 0x59 => "buffer_atomic_and_x2",
+        0x5a => "buffer_atomic_or_x2", 0x5b => "buffer_atomic_xor_x2", 0x5c => "buffer_atomic_inc_x2",
+        0x5d => "buffer_atomic_dec_x2",
         _ => return None,
     })
 }

@@ -559,9 +559,14 @@ pub fn run_res_psv(words: &[u32], root: tombox_xshader::meta::RootSig, buf: Opti
             let n: u32 = hlsl.split("struct TbElem_ubuf0 { uint w[").nth(1).and_then(|s| s.split(']').next()).and_then(|s| s.parse().ok()).unwrap_or(1);
             stride = n * 4;
             fmt = 0;
+        } else if hlsl.contains("RWStructuredBuffer<uint64_t> ubuf0") {
+            stride = 8;
+            fmt = 0;
         } else if hlsl.contains("RWStructuredBuffer<uint> ubuf0") {
             stride = 4;
             fmt = 0;
+        } else if hlsl.contains("RWBuffer<uint64_t>") {
+            fmt = 17;
         } else if hlsl.contains("RWBuffer<float4>") {
             fmt = 41;
         } else if hlsl.contains("RWBuffer<uint4>") {
@@ -582,7 +587,7 @@ pub fn run_res_psv(words: &[u32], root: tombox_xshader::meta::RootSig, buf: Opti
             let base = vcpu + i * 64 * vinc;
             tbl_gpu.push(vgpu + (i * 64 * vinc) as u64);
             if ty == 1 && !ubuf.is_null() {
-                let esz = if stride != 0 { stride } else if fmt == 2 || fmt == 3 { 16 } else { 4 };
+                let esz = if stride != 0 { stride } else if fmt == 2 || fmt == 3 { 16 } else if fmt == 17 { 8 } else { 4 };
                 for slot in 0..8u32 {
                     let first = (slot * 128 / esz) as u64;
                     let mut ud = [0u8; 40];
@@ -1577,6 +1582,60 @@ fn mubuf_atomic_scalar_offset() {
                         word[1] = (word[1] & 0x00ff_ffff) | (s << 24);
                     }
                     cs.push(BufCase { m, pre: p.w, op: word, rt: vec![if glc { old } else { data }], mem: vec![(w, f(old, data, old)), (w ^ 1, at(w ^ 1))] });
+                }
+            }
+        }
+        run_buf_cases_psv(group, &cs, &psv);
+    }
+}
+
+#[test]
+fn mubuf_atomic_x2() {
+    type At64 = fn(u64, u64, u64) -> u64;
+    let atoms: [(&'static str, u32, At64); 13] = [
+        ("buffer_atomic_swap_x2", 0x50, |_, s, _| s),
+        ("buffer_atomic_cmpswap_x2", 0x51, |m, s, c| if m == c { s } else { m }),
+        ("buffer_atomic_add_x2", 0x52, |m, s, _| m.wrapping_add(s)),
+        ("buffer_atomic_sub_x2", 0x53, |m, s, _| m.wrapping_sub(s)),
+        ("buffer_atomic_smin_x2", 0x55, |m, s, _| (m as i64).min(s as i64) as u64),
+        ("buffer_atomic_umin_x2", 0x56, |m, s, _| m.min(s)),
+        ("buffer_atomic_smax_x2", 0x57, |m, s, _| (m as i64).max(s as i64) as u64),
+        ("buffer_atomic_umax_x2", 0x58, |m, s, _| m.max(s)),
+        ("buffer_atomic_and_x2", 0x59, |m, s, _| m & s),
+        ("buffer_atomic_or_x2", 0x5a, |m, s, _| m | s),
+        ("buffer_atomic_xor_x2", 0x5b, |m, s, _| m ^ s),
+        ("buffer_atomic_inc_x2", 0x5c, |m, s, _| if m >= s { 0 } else { m + 1 }),
+        ("buffer_atomic_dec_x2", 0x5d, |m, s, _| if m == 0 || m > s { s } else { m - 1 }),
+    ];
+    let q64 = |q: usize| ((BUF[q * 2 + 1] as u64) << 32) | BUF[q * 2] as u64;
+    let inputs: [(usize, u64, u64); 8] = [
+        (0, 0x0000_0000_0000_0001, 0x8786_8584_8382_8180),
+        (1, 0xffff_ffff_ffff_ffff, 0x0706_0504_0302_0100),
+        (2, 0x0000_0000_0000_0010, 0x0000_0010_ffff_fff0),
+        (3, 0x8000_0000_0000_0000, 0x8000_0000_7fff_ffff),
+        (2, 0x0000_0000_0000_0020, 0xdead_beef_cafe_babe),
+        (0, 0x0000_0000_0000_0000, 0x0000_0000_0000_0000),
+        (1, 0x8000_0000_0000_0001, 0x0000_0000_0000_0000),
+        (3, 0x0000_0000_0000_0007, 0xffff_ffff_ffff_ffff),
+    ];
+    let raw = tombox_xshader::meta::PsvResource { res_type: 7, space: 0, lower: 0, upper: 7, kind: 1 };
+    for (group, psv) in [("mubuf_atomic_x2_typed", Vec::new()), ("mubuf_atomic_x2_raw", vec![raw])] {
+        let mut cs = Vec::new();
+        for (m, opc, f) in atoms {
+            for &(q, s, cmp) in &inputs {
+                let old = q64(q);
+                let new = f(old, s, cmp);
+                for glc in [true, false] {
+                    let mut p = Prog::new();
+                    p.vv(1, (q * 8) as u32).vv(4, s as u32).vv(5, (s >> 32) as u32).vv(6, cmp as u32).vv(7, (cmp >> 32) as u32);
+                    let rv = if glc { old } else { s };
+                    cs.push(BufCase {
+                        m,
+                        pre: p.w,
+                        op: mubuf(opc, 0, true, false, glc, 1, 4),
+                        rt: vec![rv as u32, (rv >> 32) as u32],
+                        mem: vec![(q * 2, new as u32), (q * 2 + 1, (new >> 32) as u32)],
+                    });
                 }
             }
         }
