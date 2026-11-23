@@ -2660,6 +2660,44 @@ fn legacy_minmax_on_warp_keeps_a_nan_in_either_source() {
 }
 
 #[test]
+fn gcn_clamp_transcendentals_match_the_isa() {
+    fn run_op(op: u32, x: u32) -> u32 {
+        let mov = [0x7e00_0000 | (1 << 17) | (1 << 9) | 255, x];
+        let mut code = vec![mov[0], mov[1]];
+        code.push(0x7e00_0000 | (op << 9) | (256 + 1));
+        code.push(S_ENDPGM);
+        let bytes: Vec<u8> = code.iter().flat_map(|w| w.to_le_bytes()).collect();
+        let lowered = tombox_xshader::gcn::to_rdna2(&bytes).unwrap_or_else(|e| panic!("op {op:#x}: {e}"));
+        let mut words: Vec<u32> = lowered.isa[..lowered.code_len]
+            .chunks_exact(4)
+            .map(|c| u32::from_le_bytes(c.try_into().unwrap()))
+            .collect();
+        assert_eq!(words.pop(), Some(S_ENDPGM), "op {op:#x} must end in s_endpgm");
+        let mut p = Prog::new();
+        p.raw(&words);
+        run(&p.words()).unwrap_or_else(|e| panic!("op {op:#x}: {e}"))[0]
+    }
+    let cases: &[(u32, &[(f32, u32)])] = &[
+        (0x28, &[(0.0, 0x7f7f_ffff), (-0.0, 0xff7f_ffff), (f32::INFINITY, 0), (1.0, 0x3f80_0000), (2.0, 0x3f00_0000), (0.125, 0x4100_0000)]),
+        (0x2c, &[(0.0, 0x7f7f_ffff), (-0.0, 0xff7f_ffff), (f32::INFINITY, 0), (1.0, 0x3f80_0000), (4.0, 0x3f00_0000), (0.25, 0x4000_0000), (-1.0, 0xffc0_0000)]),
+        (0x26, &[(0.0, 0xff7f_ffff), (-0.0, 0xff7f_ffff), (1.0, 0), (2.0, 0x3f80_0000), (4.0, 0x4000_0000), (8.0, 0x4040_0000), (f32::INFINITY, 0x7f80_0000), (-1.0, 0xffc0_0000)]),
+    ];
+    for op in [0x29u32, 0x2d, 0x45, 0x46] {
+        let code: Vec<u8> = [0x7e00_0000u32 | (1 << 17) | (op << 9) | (256 + 1), S_ENDPGM].iter().flat_map(|w| w.to_le_bytes()).collect();
+        let err = match tombox_xshader::gcn::to_rdna2(&code) {
+            Ok(_) => panic!("legacy op {op:#x} must stay refused"),
+            Err(e) => e.to_string(),
+        };
+        assert!(err.contains("legacy transcendental") && err.contains("not established"), "op {op:#x}: {err}");
+    }
+    for &(op, list) in cases {
+        for &(x, exp) in list {
+            assert_eq!(run_op(op, x.to_bits()), exp, "op {op:#x} input {x:?}");
+        }
+    }
+}
+
+#[test]
 fn pkaccum_u8_packs_four_bytes_into_one_register() {
     fn mov_lit(dst: u32, val: u32) -> [u32; 2] {
         [0x7e00_0000 | (dst << 17) | (1 << 9) | 255, val]
