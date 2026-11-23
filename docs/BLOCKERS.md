@@ -819,10 +819,14 @@ elease`, the log shows one install and every interface is emulated.
     - On WARP it checks the counter total, that inactive lanes are untouched, and that no other GDS dword changes.
     - With TOMBOX_EXEC_HW=1 on the RTX 5060 (wave32) it also checks the per-wave return values.
   - Limits: a wave64 source is refused, because it spans two host waves. The LDS (GDS=0) form is not lowered.
-- OPEN, ds_gws_init / ds_gws_sema_v / ds_gws_sema_br / ds_gws_sema_p / ds_gws_sema_release_all / ds_gws_barrier: these remain translator refusals.
+- UPDATE 2026-11-23, ds_gws_init / ds_gws_sema_v / ds_gws_sema_br are no longer refusals: 9584ffa lowers them as one wave-uniform GWS counter update (hlsl/gds.rs emit_gws_counter).
+  - The first active lane of each guest wave is chosen with InterlockedMin over its thread id, and only that lane does one InterlockedExchange (init, S1) or InterlockedAdd (sema_v +1, sema_br +S1) at M0[31:16] + simm in the 64-resource GWS table. The 12-bit counter mask is the gfx103 register definition (Mesa, THIRD_PARTY/CREDITS, #134). The value is wave-uniform, not per lane.
+  - Limits, each a named refusal: a stage other than compute, a group that is not wave32 or has more than 64 z groups, any control flow, and a resource encoding outside the 6-bit simm.
+  - Tests, WARP 2026-11-23: exec_mem::gds::ds_gws_counter_updates_once_per_guest_wave, ds_gws_concurrent_posts_preserve_all_increments, ds_gws_bulk_post_uses_first_active_lane_in_each_group and ds_gws_counter_boundaries_across_rows_and_partial_waves pass; ds_gws_refuses_unsupported_group_and_wait pins the refusals.
+- OPEN, ds_gws_sema_p / ds_gws_sema_release_all / ds_gws_barrier: these remain translator refusals ("global wave sync counts hardware waves across thread groups; no lowering in the one-lane-per-thread model").
   - The XML describes them as GWS resources that queue the wave until a semaphore release or a barrier count is reached, across waves and thread groups.
   - D3D12 has no cross-group blocking primitive and no forward-progress guarantee for spin waits, so a lowering could hang or would only appear to work.
-  - No title shader uses them (mnemonics.txt: 0 uses).
+  - No title shader uses any ds_gws_* (tools/progress/data/mnemonics.txt: 0 uses).
 - OPEN, ds_ordered_count: remains a translator refusal. The XML says it adds count_bits(exec) to one of 4 dedicated ordered-count packers in wave-launch order. D3D12 does not expose dispatch order. Atomics would give unique slots but not ordered ones, so the result would only appear to work. 0 uses.
 
 ## D3D12.X last slots, verifier notes (2026-11-21)
