@@ -737,6 +737,34 @@ fn unmapped_position_export_without_clip_or_cull_distance_is_ignored() {
 }
 
 #[test]
+fn scratch_segment_flat_loads_and_stores_are_refused() {
+    let flat = |op: u32, seg: u32, d1: u32| [0xdc00_0000 | (op << 18) | (seg << 14), d1];
+    let load = |seg: u32| {
+        let [a, b] = flat(0x0c, seg, 1 | (0x7f << 16) | (4 << 24));
+        shader(Stage::Compute, &[a, b, S_ENDPGM], vec![], vec![], None)
+    };
+    let ok = translate(&load(2)).expect("global load translates");
+    assert!(ok.hlsl.contains("tb_gload("), "{}", ok.hlsl);
+    let err = match translate(&load(1)) {
+        Ok(t) => panic!("expected refusal, got:\n{}", t.hlsl),
+        Err(e) => e,
+    };
+    assert!(err.starts_with("scratch-memory load unsupported"), "{err}");
+
+    let store = |seg: u32| {
+        let [a, b] = flat(0x1c, seg, 1 | (2 << 8) | (0x7f << 16));
+        shader(Stage::Compute, &[a, b, S_ENDPGM], vec![], vec![], None)
+    };
+    let ok = translate(&store(2)).expect("global store translates");
+    assert!(ok.hlsl.contains("tb_gstore("), "{}", ok.hlsl);
+    let err = match translate(&store(1)) {
+        Ok(t) => panic!("expected refusal, got:\n{}", t.hlsl),
+        Err(e) => e,
+    };
+    assert!(err.starts_with("flat_store_dword: scratch-segment access unsupported"), "{err}");
+}
+
+#[test]
 fn image_atomic_64bit_emits_uint64_uav_and_sm66() {
     let words = [
         0xf40c_0004, 0xfa00_0000,
