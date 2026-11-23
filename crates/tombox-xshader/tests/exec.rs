@@ -1435,6 +1435,14 @@ fn run_buf_cases(group: &str, cs: &[BufCase]) {
 }
 
 fn run_buf_cases_psv(group: &str, cs: &[BufCase], psv: &[tombox_xshader::meta::PsvResource]) {
+    run_buf_cases_core(group, cs, &BUF, psv);
+}
+
+fn run_buf_cases_buf(group: &str, cs: &[BufCase], buf: &[u32]) {
+    run_buf_cases_core(group, cs, buf, &[]);
+}
+
+fn run_buf_cases_core(group: &str, cs: &[BufCase], buf: &[u32], psv: &[tombox_xshader::meta::PsvResource]) {
     let root = tombox_xshader::meta::RootSig { version: 2, flags: 1, params: vec![rtable(1, 8)], num_static_samplers: 0, static_samplers: Vec::new() };
     let mut fails = Vec::new();
     let mut all: std::collections::BTreeSet<&str> = Default::default();
@@ -1451,7 +1459,7 @@ fn run_buf_cases_psv(group: &str, cs: &[BufCase], psv: &[tombox_xshader::meta::P
         }
         let mut p = Prog::new();
         p.raw(&if rt { vop::opaque(&c.pre) } else { c.pre.clone() }).raw(&[0xf408_0004, 0xfa00_0000]).raw(&c.op).raw(&[vop1(1, 0, v(4)), vop1(1, 1, v(5))]);
-        match run_res_psv(&p.words(), root.clone(), Some(&BUF), None, sampler(0, 3, 0), rt, psv) {
+        match run_res_psv(&p.words(), root.clone(), Some(buf), None, sampler(0, 3, 0), rt, psv) {
             Ok(o) => {
                 let mut ok = o.rt[..c.rt.len()] == c.rt[..];
                 let mut got = Vec::new();
@@ -1655,6 +1663,32 @@ fn buffer_mubuf() {
         }
     }
     run_buf_cases("mubuf", &cs);
+}
+
+#[test]
+fn buffer_mubuf_format_d16() {
+    let vals: [u32; 8] = [fb(1.5), fb(0.1), fb(1.0), fb(-2.0), fb(1000.5), fb(0.5), fb(1.000_000_1), fb(0.25)];
+    let mut cs = Vec::new();
+    for (idx, &w) in vals.iter().enumerate() {
+        let h = f2h(f32::from_bits(w));
+        let keep = 0x5a5a_a5a5u32;
+        cs.push(BufCase { m: "buffer_load_format_d16_x", pre: { let mut p = Prog::new(); p.vv(1, idx as u32).vv(4, keep); p.w }, op: mubuf(0x80, 0, false, true, false, 1, 4), rt: vec![(keep & 0xffff_0000) | h], mem: vec![] });
+        cs.push(BufCase { m: "buffer_load_format_d16_hi_x", pre: { let mut p = Prog::new(); p.vv(1, idx as u32).vv(4, keep); p.w }, op: mubuf(0x26, 0, false, true, false, 1, 4), rt: vec![(keep & 0xffff) | (h << 16)], mem: vec![] });
+        cs.push(BufCase { m: "buffer_store_format_d16_x", pre: { let mut p = Prog::new(); p.vv(1, idx as u32).vv(4, h); p.w }, op: mubuf(0x84, 0, false, true, false, 1, 4), rt: vec![], mem: vec![(idx, fb(h2f(h))), ((idx + 1) % 8, vals[(idx + 1) % 8])] });
+        cs.push(BufCase { m: "buffer_store_format_d16_hi_x", pre: { let mut p = Prog::new(); p.vv(1, idx as u32).vv(4, h << 16); p.w }, op: mubuf(0x27, 0, false, true, false, 1, 4), rt: vec![], mem: vec![(idx, fb(h2f(h))), ((idx + 1) % 8, vals[(idx + 1) % 8])] });
+    }
+    run_buf_cases_buf("mubuf_format_d16", &cs, &vals);
+}
+
+#[test]
+fn mubuf_format_d16_refuses_integer_slots() {
+    let root = tombox_xshader::meta::RootSig { version: 2, flags: 1, params: vec![rtable(1, 8)], num_static_samplers: 0, static_samplers: Vec::new() };
+    let mut w = vec![vop1(1, 1, LIT), 0, 0xf408_0004, 0xfa00_0000];
+    w.extend_from_slice(&mubuf(0x80, 0, false, true, false, 1, 4));
+    w.push(vop2(0x25, 5, ic(0), 4));
+    w.push(S_ENDPGM);
+    let e = translate(&shader_root(&w, root)).err().expect("d16 on an integer slot must be refused");
+    assert!(e.contains("integer slot"), "{e}");
 }
 
 fn dw(x: f64) -> [u32; 2] {

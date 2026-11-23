@@ -325,6 +325,8 @@ pub fn mubuf(op: u32) -> Option<&'static str> {
         0x04 => "buffer_store_format_x", 0x05 => "buffer_store_format_xy",
         0x06 => "buffer_store_format_xyz", 0x07 => "buffer_store_format_xyzw",
         0x08 => "buffer_load_ubyte", 0x09 => "buffer_load_sbyte", 0x0a => "buffer_load_ushort",
+        0x26 => "buffer_load_format_d16_hi_x", 0x27 => "buffer_store_format_d16_hi_x",
+        0x80 => "buffer_load_format_d16_x", 0x84 => "buffer_store_format_d16_x",
         0x0b => "buffer_load_sshort", 0x0c => "buffer_load_dword", 0x0d => "buffer_load_dwordx2",
         0x0e => "buffer_load_dwordx4", 0x0f => "buffer_load_dwordx3", 0x18 => "buffer_store_byte",
         0x1a => "buffer_store_short", 0x1c => "buffer_store_dword", 0x1d => "buffer_store_dwordx2",

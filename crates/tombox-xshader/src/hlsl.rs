@@ -2154,7 +2154,7 @@ impl<'a> Emitter<'a> {
             self.tbuf_uint.insert(slot);
             return Ok(Res::TBuf(slot, true));
         }
-        if ins.mnemonic.contains("_format_") {
+        if ins.mnemonic.contains("_format") {
             // Typed buffer (Buffer<T> / RWBuffer<T>), addressed by element index.
             self.tbuf.insert((is_uav, slot));
             return Ok(Res::TBuf(slot, is_uav));
@@ -5619,6 +5619,9 @@ impl<'a> Emitter<'a> {
         }
         if let Some(Res::TBuf(slot, true)) = self.res.get(&idx).and_then(|v| v.first()).copied() {
             if self.tbuf_uint.contains(&slot) {
+                if ins.mnemonic.contains("_d16_") {
+                    return Err("d16 typed-buffer MUBUF on an integer slot is unsupported".into());
+                }
                 // uint-typed UAV (see atomics): single-component raw loads/stores.
                 let (offen, idxen) = (ins.aux.mask & 1 != 0, ins.aux.mask & 2 != 0);
                 // A buffer used with atomics has a single 32-bit channel (D3D requires
@@ -5675,6 +5678,56 @@ impl<'a> Emitter<'a> {
                 _ => return Err("bad vdata".into()),
             };
             let nm = if is_uav { format!("utb{slot}") } else { format!("stb{slot}") };
+            if ins.mnemonic.contains("_d16_") {
+                if self.tbuf_ty.get(&(is_uav, slot)).is_some() {
+                    return Err("d16 typed-buffer MUBUF on an integer slot is unsupported".into());
+                }
+                let hi = ins.mnemonic.ends_with("_hi_x");
+                let t = self.tmp;
+                self.tmp += 1;
+                if ins.mnemonic.starts_with("buffer_store") {
+                    if !is_uav {
+                        return Err("buffer_store_format_d16 to a non-UAV table".into());
+                    }
+                    let mut c = Vec::new();
+                    for k in 0..4u8 {
+                        let e = if k < n {
+                            let o = Opnd::Vgpr(vd + k / 2);
+                            self.touch(&o);
+                            let r = r(&o)?;
+                            if hi || k % 2 == 1 {
+                                format!("f16tof32(({r}) >> 16)")
+                            } else {
+                                format!("f16tof32(({r}) & 0xffffu)")
+                            }
+                        } else {
+                            "0.0".into()
+                        };
+                        c.push(e);
+                    }
+                    let addr = format!("{nm}[{index}]");
+                    self.line(&format!("float4 t{t} = float4({});", c.join(", ")));
+                    self.line(&format!("if (exec_lo & 1u) {{ {addr} = t{t}; {} }}", small_float_store_fixup(&addr, &format!("t{t}"))));
+                } else {
+                    self.line(&format!("float4 t{t} = {nm}[{index}];"));
+                    for ri in 0..n.div_ceil(2) {
+                        let lo_k = ri * 2;
+                        let lo = format!("f32tof16(t{t}.{})", XYZW[lo_k as usize]);
+                        let o = Opnd::Vgpr(vd + ri);
+                        let v = if hi {
+                            self.touch(&o);
+                            format!("((({}) & 0xffffu) | (({lo}) << 16))", r(&o)?)
+                        } else if lo_k + 1 < n {
+                            format!("({lo}) | (f32tof16(t{t}.{}) << 16)", XYZW[(lo_k + 1) as usize])
+                        } else {
+                            self.touch(&o);
+                            format!("((({}) & 0xffff0000u) | (({lo}) & 0xffffu))", r(&o)?)
+                        };
+                        self.wv(&o, &v)?;
+                    }
+                }
+                return Ok(());
+            }
             if ins.mnemonic.starts_with("buffer_store") {
                 if !is_uav {
                     return Err("buffer_store_format to a non-UAV table".into());
