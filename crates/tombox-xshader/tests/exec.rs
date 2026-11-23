@@ -2379,6 +2379,40 @@ fn pk_int16_constants_and_clamp() {
     c.run_both("pk_int16_constants_and_clamp");
 }
 
+#[test]
+fn pk_int16_mul_shift_minmax() {
+    let mut c = Cases::new();
+    let pk = |lo: u32, hi: u32| (lo & 0xffff) | (hi << 16);
+    let half = |x: u32, hi: bool| if hi { x >> 16 } else { x & 0xffff };
+    let ops: [(&str, u32, fn(u32, u32) -> u32); 6] = [
+        ("v_pk_mul_lo_u16", 0x01, |a, b| a.wrapping_mul(b) & 0xffff),
+        ("v_pk_ashrrev_i16", 0x06, |a, b| ((b as u16 as i16) >> (a & 15)) as u16 as u32),
+        ("v_pk_max_i16", 0x07, |a, b| (a as u16 as i16).max(b as u16 as i16) as u16 as u32),
+        ("v_pk_min_i16", 0x08, |a, b| (a as u16 as i16).min(b as u16 as i16) as u16 as u32),
+        ("v_pk_max_u16", 0x0c, |a, b| a.max(b)),
+        ("v_pk_min_u16", 0x0d, |a, b| a.min(b)),
+    ];
+    let inputs = [
+        (pk(0x0003, 0x8000), pk(0x7fff, 0x0002)),
+        (pk(0xffff, 0x0000), pk(0x0001, 0xffff)),
+        (pk(0x8000, 0x7fff), pk(0x8001, 0x7ffe)),
+        (pk(0x0011, 0x001f), pk(0x8000, 0xc350)),
+        (pk(0x0100, 0x00ff), pk(0x0101, 0x0102)),
+    ];
+    let sels = [(0b000, 0b011), (0b011, 0b000), (0b001, 0b010)];
+    for (m, op, f) in ops {
+        for &(a, b) in &inputs {
+            for &(sel, sel_hi) in &sels {
+                let lo = f(half(a, sel & 1 != 0), half(b, sel & 2 != 0));
+                let hi = f(half(a, sel_hi & 1 != 0), half(b, sel_hi & 2 != 0));
+                let w = vop3p(op, 10, [v(1), v(2), 0], sel, sel_hi, 0, 0);
+                vc(&mut c, m, &[(1, a), (2, b)], &w, &[10], &[pk(lo, hi)]);
+            }
+        }
+    }
+    c.run_both("pk_int16_mul_shift_minmax");
+}
+
 #[path = "exec_mem/mod.rs"]
 mod exec_mem;
 
