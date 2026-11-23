@@ -796,3 +796,36 @@ fn image_mimg_atomics_rdna2_silicon() {
     println!("expected values recorded on {}", super::mimg_rdna2::SOURCE);
     run_mem_cases("mimg_atomics_rdna2_silicon", &cs);
 }
+
+#[test]
+fn image_gather4_bias_and_dmask_refusals() {
+    for (op, operands) in [(mimg(0x45, 0xf, 1, 1, 4, 0, 12), 3u32), (mimg(0x46, 0xf, 1, 1, 4, 0, 12), 4)] {
+        let mut pre = Prog::new();
+        pre.vv(1, fb(0.5));
+        pre.vv(2, fb(0.25)).vv(3, fb(0.75));
+        if operands == 4 {
+            pre.vv(4, fb(1.0));
+        }
+        let words = build(&pre, &op, 4, 4, false);
+        let err = match translate(&extract(&words, false)) {
+            Ok(t) => panic!("expected a gather4 bias refusal, got:\n{}", t.hlsl),
+            Err(e) => e,
+        };
+        assert!(err.contains("gather4 with LOD bias or clamp unsupported"), "{err}");
+    }
+
+    let bad_mask = mimg(0x47, 0x3, 1, 1, 4, 0, 12);
+    let mut pre = Prog::new();
+    pre.vv(1, fb(0.25)).vv(2, fb(0.75));
+    let words = build(&pre, &bad_mask, 4, 4, false);
+    let err = match translate(&extract(&words, false)) {
+        Ok(t) => panic!("expected a gather4 dmask refusal, got:\n{}", t.hlsl),
+        Err(e) => e,
+    };
+    assert!(err.contains("gather4 with dmask 0x3 unsupported"), "{err}");
+
+    let alpha = mimg(0x47, 0x8, 1, 1, 4, 0, 12);
+    let words = build(&pre, &alpha, 4, 1, false);
+    let t = translate(&extract(&words, false)).expect("single-channel gather4_lz translates");
+    assert!(t.hlsl.contains(".GatherAlpha("), "{}", t.hlsl);
+}
