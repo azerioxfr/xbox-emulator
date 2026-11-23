@@ -3898,7 +3898,7 @@ impl<'a> Emitter<'a> {
                 self.line(&format!("scc = {c} ? 1u : 0u;"));
                 Ok(())
             }
-            Enc::Smem if matches!(ins.op, 0x1f | 0x20 | 0x26 | 0x27) => Ok(()),
+            Enc::Smem if matches!(ins.op, 0x1f | 0x20 | 0x21 | 0x26 | 0x27) => Ok(()),
             Enc::Smem if matches!(ins.op, 0x24 | 0x25) => {
                 let (lo, hi, step) = if ins.op == 0x24 { (1000u32, 1001u32, 16u32) } else { (1002, 1003, 1) };
                 self.hw_regs.insert(lo);

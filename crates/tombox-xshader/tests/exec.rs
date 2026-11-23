@@ -1991,7 +1991,7 @@ fn scalar_sopp_control() {
         post.raw(&[sopk(0x12, 21, hw(1, 0, 8))]).s2v(0, 21);
         c.add("s_round_mode", &pr(), &[sopp(0x24, 0x6), sopp(0x25, 0x9)], &post, &[0x96]);
     }
-    for (m, op) in [("s_gl1_inv", 0x1fu32), ("s_dcache_inv", 0x20)] {
+    for (m, op) in [("s_gl1_inv", 0x1fu32), ("s_dcache_inv", 0x20), ("s_dcache_wb", 0x21)] {
         sopp_state(&mut c, m, &smem(op, 0, 0, 0, 0));
     }
     for (m, op) in [("s_atc_probe", 0x26u32), ("s_atc_probe_buffer", 0x27)] {
