@@ -2162,6 +2162,8 @@ impl<'a> Emitter<'a> {
         let subword = matches!(
             ins.mnemonic.as_str(),
             "buffer_load_ubyte" | "buffer_load_sbyte" | "buffer_load_ushort" | "buffer_load_sshort" | "buffer_store_byte" | "buffer_store_short"
+                | "buffer_load_ubyte_d16" | "buffer_load_ubyte_d16_hi" | "buffer_load_sbyte_d16" | "buffer_load_sbyte_d16_hi"
+                | "buffer_load_short_d16" | "buffer_load_short_d16_hi" | "buffer_store_byte_d16_hi" | "buffer_store_short_d16_hi"
         );
         let ndw = match Self::mubuf_dwords(&ins.mnemonic) {
             Some(n) => n,
@@ -5749,6 +5751,11 @@ impl<'a> Emitter<'a> {
             "buffer_load_sshort" => Some((16, true, false)),
             "buffer_store_byte" => Some((8, false, true)),
             "buffer_store_short" => Some((16, false, true)),
+            "buffer_load_ubyte_d16" | "buffer_load_ubyte_d16_hi" => Some((8, false, false)),
+            "buffer_load_sbyte_d16" | "buffer_load_sbyte_d16_hi" => Some((8, true, false)),
+            "buffer_load_short_d16" | "buffer_load_short_d16_hi" => Some((16, false, false)),
+            "buffer_store_byte_d16_hi" => Some((8, false, true)),
+            "buffer_store_short_d16_hi" => Some((16, false, true)),
             _ => None,
         };
         let n = match (Self::mubuf_dwords(&ins.mnemonic), sub) {
@@ -5801,14 +5808,23 @@ impl<'a> Emitter<'a> {
                     return Err("buffer_store to a non-UAV table".into());
                 }
                 self.touch(&o);
+                let data = if ins.mnemonic.ends_with("_d16_hi") { format!("(({}) >> 16u)", r(&o)?) } else { r(&o)? };
                 self.line(&format!(
-                    "if (exec_lo & 1u) {{ InterlockedAnd({elem}, ~({mask:#x}u << t{t}s)); InterlockedOr({elem}, (({}) & {mask:#x}u) << t{t}s); }}",
-                    r(&o)?
+                    "if (exec_lo & 1u) {{ InterlockedAnd({elem}, ~({mask:#x}u << t{t}s)); InterlockedOr({elem}, ({data} & {mask:#x}u) << t{t}s); }}"
                 ));
                 return Ok(());
             }
             let v = format!("(({elem} >> t{t}s) & {mask:#x}u)");
             let e = if signed { format!("asuint(asint({v} << {}) >> {})", 32 - bits, 32 - bits) } else { v };
+            let e = if ins.mnemonic.ends_with("_d16_hi") {
+                self.touch(&o);
+                format!("((({}) & 0xffffu) | (({e}) << 16u))", r(&o)?)
+            } else if ins.mnemonic.ends_with("_d16") {
+                self.touch(&o);
+                format!("((({}) & 0xffff0000u) | (({e}) & 0xffffu))", r(&o)?)
+            } else {
+                e
+            };
             return self.wv(&o, &e);
         }
         let t = self.tmp;

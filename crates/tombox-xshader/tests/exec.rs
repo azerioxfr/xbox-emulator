@@ -1612,6 +1612,29 @@ fn buffer_mubuf() {
         let w2 = o2 / 4;
         let word = u32::from_le_bytes(nb[w2 * 4..w2 * 4 + 4].try_into().unwrap());
         cs.push(BufCase { m: "buffer_store_short", pre: pre(a & !1, 0x1234_56ab, 0), op: mubuf(0x1a, imm & !1, true, false, false, 1, 4), rt: vec![], mem: vec![(w2, word)] });
+        let keep = 0x5a5a_a5a5u32;
+        let lo = |v: u32| (keep & 0xffff_0000) | (v & 0xffff);
+        let hi = |v: u32| (keep & 0xffff) | (v << 16);
+        let sb = by[o] as i8 as i32 as u32;
+        for (m, op, aa, ii, want) in [
+            ("buffer_load_ubyte_d16", 0x20, a, imm, lo(by[o] as u32)),
+            ("buffer_load_ubyte_d16_hi", 0x21, a, imm, hi(by[o] as u32)),
+            ("buffer_load_sbyte_d16", 0x22, a, imm, lo(sb)),
+            ("buffer_load_sbyte_d16_hi", 0x23, a, imm, hi(sb)),
+            ("buffer_load_short_d16", 0x24, a & !1, imm & !1, lo(h as u32)),
+            ("buffer_load_short_d16_hi", 0x25, a & !1, imm & !1, hi(h as u32)),
+        ] {
+            cs.push(BufCase { m, pre: pre(aa, keep, 0), op: mubuf(op, ii, true, false, false, 1, 4), rt: vec![want], mem: vec![] });
+        }
+        let mut nb = by.clone();
+        nb[o] = 0xab;
+        let word = u32::from_le_bytes(nb[w * 4..w * 4 + 4].try_into().unwrap());
+        cs.push(BufCase { m: "buffer_store_byte_d16_hi", pre: pre(a, 0x56ab_1234, 0), op: mubuf(0x19, imm, true, false, false, 1, 4), rt: vec![], mem: vec![(w, word), (w ^ 1, BUF[w ^ 1])] });
+        let mut nb = by.clone();
+        nb[o2] = 0xab;
+        nb[o2 + 1] = 0x56;
+        let word = u32::from_le_bytes(nb[w2 * 4..w2 * 4 + 4].try_into().unwrap());
+        cs.push(BufCase { m: "buffer_store_short_d16_hi", pre: pre(a & !1, 0x56ab_1234, 0), op: mubuf(0x1b, imm & !1, true, false, false, 1, 4), rt: vec![], mem: vec![(w2, word)] });
     }
     for &idx in &[0u32, 2, 5] {
         cs.push(BufCase { m: "buffer_store_format_x", pre: pre(idx, 0xc0ff_ee00, 0), op: mubuf(0x04, 0, false, true, false, 1, 4), rt: vec![], mem: vec![(idx as usize, 0xc0ff_ee00), ((idx as usize + 1) % 8, BUF[(idx as usize + 1) % 8])] });
