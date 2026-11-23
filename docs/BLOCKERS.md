@@ -1185,14 +1185,17 @@ Headless runs straight into each title's test scene, on the staged release of 11
 
 - On Xbox the CPU and GPU share memory, so a CPU write into a placed texture is visible to the GPU straight away. On PC each placed texture is a committed copy that upload.rs refills. Event mode (the default) only re-uploaded after a TomboxNoteTitleMemory note. In Trackmania the note link from xmem was dead: the 65536-miss cap latched "absent" before d3d12_xs.dll loaded. The libvpx video planes (memtype 3, fmt 61, layout 264) therefore stayed zero: notes=0, still-zero=198 subresources (24 MB), zero->data=0.
 - What the emulator now does:
-  - xmem reserves its own GPU-visible memory with MEM_WRITE_WATCH: XMemAllocDefault, pool granules and XMemVirtualAlloc reservations. The patch was handed to the xmem owner. It also exports TomboxWriteWatchOwner.
+  - xmem reserves its own GPU-visible memory with MEM_WRITE_WATCH: XMemAllocDefault, pool granules and XMemVirtualAlloc reservations (crates/compat/xmem/src/write_watch.rs, alloc.rs, pool.rs; 6a1a4b1, extended in e67e3d4). It also exports TomboxWriteWatchOwner.
   - At each PresentX pump, upload.rs calls GetWriteWatch with WRITE_WATCH_FLAG_RESET on the emulator-owned ranges, and re-uploads only the dirty subresources. For linear and tiled layouts alike, an upload covers only the rows whose element offsets touch a dirty page.
   - Every resource that keeps the hash path is logged once with the reason. Any CPU write that cannot be uploaded is counted (lost) and logged once per resource. TOMBOX_WRITE_WATCH=0 restores the old behaviour.
 - OPEN, cannot be watched:
   - Memory the title reserved with MEM_WRITE_WATCH itself is title-owned. A RESET there would corrupt the title's XMemGetWriteWatch results, so such resources keep the hash or notes path.
   - Physical-page or file-mapped views (xmem phys.rs MapViewOfFile3 placeholders) cannot carry write watch on Windows. Resources on them keep the hash/poll path (TOMBOX_UPLOAD_POLL=1).
 - DEFERRED: a guard-page (PAGE_GUARD / VEH) tracker for those views. It would fault on each first write per page per frame, and it conflicts with the title's own VEH and with the xmem range hooks. Not started.
-- OPEN, stage B: the dirty check runs only at PresentX. A CPU write followed by ExecuteCommandLists in the same frame is still seen one present late. The hook in present.rs exec_lists_x needs a re-entry guard (the pump's own ExecuteCommandLists goes through it), a cross-queue fence Wait and a list ring. Not done yet.
+- UPDATE 2026-11-23, stage B: the dirty check also runs at submission now. present.rs exec_lists_x calls upload::submit_hook before the title's ExecuteCommandLists, so a CPU write after recording is uploaded into that submission instead of one present late (6a1a4b1).
+  - The pump re-entry guard is a thread-local (UploadGuard); the upload work runs on a ring of 16 fence-tracked allocator/list pairs and waits on the upload fence for at most 2 s (counted as ring_waits). A title queue other than the upload queue records the ring value and inserts a Wait on the upload fence (cross_queue).
+  - When the ring is exhausted the dirty subresources are re-queued for the next submit or PresentX, logged once, so nothing is dropped silently. TOMBOX_WW_SUBMIT=0 restores the PresentX-only pump.
+  - Not re-run here: d3d12_xs cannot link on this machine, so hw_cpu_write_between_record_and_submit_reaches_that_submit_linear / _tiled and hw_a_dirty_page_with_unchanged_texels_is_not_re_uploaded (crates/compat/d3d12_xs/src/upload_ww_hw.rs) were not executed for this entry.
 
 ## Title memory accounting gaps (xmem title_acct + d3d12_xs title_gpu) - 2026-11-22
 
