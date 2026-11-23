@@ -176,6 +176,12 @@ float tb_u2f(uint a) { precise float r = (float)(a & 0xffff0000u) + (float)(a & 
 float tb_log(float x) { uint b = asuint(x); return tb_qn((b == 0x7f800000u) ? x : TB_SEL(b - 0x00800000u < 0x7f000000u && (b & 0x7fffffu) == 0u, (float)((int)(b >> 23) - 127), log2(x))); }
 float tb_fsub(float a, float b) { precise float r = a - b; return tb_qn(r); }
 float tb_fract(float x) { if ((asuint(x) & 0x7fffffffu) >= 0x7f800000u) return asfloat(0x7fc00000u); precise float f = x - floor(x); return min(f, asfloat(0x3f7fffffu)); }
+bool tb_isinf32(float x) { return abs(x) == asfloat(0x7f800000u); }
+int tb_exp32(float x) { return (int)((asuint(x) >> 23) & 0xffu); }
+bool tb_sub32(float x) { return x != 0.0 && abs(x) < asfloat(0x00800000u); }
+float tb_div_fixup32(float q, float d, float n) { uint db = asuint(d), nb = asuint(n); uint so = (db ^ nb) & 0x80000000u; if (tb_nan(n)) return asfloat(nb | 0x00400000u); if (tb_nan(d)) return asfloat(db | 0x00400000u); if ((d == 0.0 && n == 0.0) || (tb_isinf32(d) && tb_isinf32(n))) return asfloat(0x7fc00000u); if (d == 0.0 || tb_isinf32(n)) return asfloat(so | 0x7f800000u); if (tb_isinf32(d) || n == 0.0) return asfloat(so); if (tb_exp32(n) - tb_exp32(d) < -150) return asfloat(so); if (tb_nan(q)) return asfloat(so | 0x7f800000u); return asfloat((asuint(q) & 0x7fffffffu) | so); }
+float tb_div_scale32(float x, float d, float n, out uint vcc) { vcc = 0u; if (d == 0.0 || n == 0.0) { vcc = 1u; return asfloat(0x7fc00000u); } int en = tb_exp32(n), ed = tb_exp32(d); if (en - ed >= 96) { vcc = 1u; return (x == d) ? tb_ldexp32(x, 64) : x; } if (tb_sub32(d)) return tb_ldexp32(x, 64); bool tr = abs(1.0 / (double)d) < asdouble(0u, 0x38100000u); bool tq = abs((double)n / (double)d) < asdouble(0u, 0x38100000u); if (tr && tq) { vcc = 1u; return (x == d) ? tb_ldexp32(x, -64) : x; } if (tr) return tb_ldexp32(x, -64); if (tq) { vcc = 1u; return (x == n) ? tb_ldexp32(x, 64) : x; } if (en <= 23) return tb_ldexp32(x, 64); return x; }
+float tb_div_fmas32(float a, float b, float c, uint vcc) { precise float r = tb_fma(a, b, c); if ((vcc & 1u) == 0u) return r; float up = asfloat(0x5f800000u), dn = asfloat(0x1f800000u); if (tb_exp32(c) > 127) { if (!tb_sub32(r)) return r * up; bool sa = abs(a) <= abs(b); return tb_fma((sa ? a : b) * up, sa ? b : a, c * up); } precise float q = r * dn; if (r == 0.0 || !(abs(r) < asfloat(0x20800000u))) return q; precise float df = r - q * up; if (abs(df) != asfloat(0x14800000u)) return q; precise float p = a * b; precise float pe = tb_fma(a, b, -p); precise float s1 = p + c; precise float bb = s1 - p; precise float s1e = (p - (s1 - bb)) + (c - bb); precise float e = (s1 - r) + (s1e + pe); if (e == 0.0 || ((e > 0.0) != (df > 0.0))) return q; return q + ((df > 0.0) ? asfloat(1u) : -asfloat(1u)); }
 #ifdef TB_FAST_F2H
 uint tb_f2h(float x) { uint b = asuint(x); return (b & 0x7fffffffu) > 0x7f800000u ? (((b >> 16) & 0x8000u) | 0x7e00u | ((b >> 13) & 0x3ffu)) : (uint)asuint16((float16_t)x); }
 #else
@@ -5299,6 +5305,49 @@ impl<'a> Emitter<'a> {
                 return self.wv(&d, &fe);
             }
             return self.wv(&d, &e);
+        }
+        if matches!(m.as_str(), "v_div_scale_f32" | "v_div_fmas_f32" | "v_div_fixup_f32") {
+            if self.mode_use.sp {
+                return Err(format!("{m} under a shader-written single-precision MODE is not lowered"));
+            }
+            let neg_only = m == "v_div_scale_f32";
+            let src = |i: usize| -> Result<String, String> {
+                let mut e = f(&s[i])?;
+                if ins.enc == Enc::Vop3 {
+                    if !neg_only && (ins.aux.mask >> i) & 1 != 0 {
+                        e = format!("abs({e})");
+                    }
+                    if (ins.aux.mask >> (3 + i)) & 1 != 0 {
+                        e = format!("(-{e})");
+                    }
+                }
+                Ok(e)
+            };
+            let (x, y, z) = (src(0)?, src(1)?, src(2)?);
+            if m == "v_div_scale_f32" {
+                let sdst = match (ins.raw[0] >> 8) & 0x7f {
+                    c @ 0..=105 => Opnd::Sgpr(c as u8),
+                    106 => Opnd::VccLo,
+                    124 => Opnd::Null,
+                    c => return Err(format!("carry-out register code {c} unsupported")),
+                };
+                let t = self.tmp;
+                self.tmp += 1;
+                self.line(&format!("uint t{t}v; float t{t}q = tb_div_scale32({x}, {y}, {z}, t{t}v);"));
+                let e = self.fres(ins, format!("t{t}q"));
+                self.wv(&d, &e)?;
+                if !matches!(sdst, Opnd::Null) {
+                    self.touch(&sdst);
+                    self.ws(&sdst, &format!("(((exec_lo & 1u) != 0u) ? t{t}v : 0u)"))?;
+                }
+                return Ok(());
+            }
+            let e = if m == "v_div_fmas_f32" {
+                format!("tb_div_fmas32({x}, {y}, {z}, vcc_lo)")
+            } else {
+                format!("tb_div_fixup32({x}, {y}, {z})")
+            };
+            return self.wv(&d, &self.fres(ins, e));
         }
         let vop3 = ins.enc == Enc::Vop3;
         let k = format!("asfloat({:#x}u)", ins.raw.last().copied().unwrap_or(0));

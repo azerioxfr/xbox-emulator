@@ -234,6 +234,17 @@ fn new_vector_ops() {
 }
 
 #[test]
+fn f32_div_helpers() {
+    let fixup = vop3(0x15f, 0, [v(1), v(2), v(3)], 0, 0).to_vec();
+    let fmas = vop3(0x16f, 0, [v(1), v(2), v(3)], 0, 0).to_vec();
+    let mut scale = vop3(0x16d, 0, [v(1), v(2), v(3)], 0, 0);
+    scale[0] |= 106 << 8;
+    check("v_div_fixup_f32", &program(&fixup), None, &["tb_div_fixup32(asfloat(v1), asfloat(v2), asfloat(v3))"]);
+    check("v_div_fmas_f32", &program(&fmas), None, &["tb_div_fmas32(asfloat(v1), asfloat(v2), asfloat(v3), vcc_lo)"]);
+    check("v_div_scale_f32", &program(&scale), None, &["tb_div_scale32(asfloat(v1), asfloat(v2), asfloat(v3), t", "vcc_lo = (((exec_lo & 1u) != 0u) ? t"]);
+}
+
+#[test]
 fn new_scalar_ops() {
     let to_v0 = vop1(1, 0, 4);
     let to_v1 = vop1(1, 1, 5);
@@ -702,5 +713,17 @@ fn vop3p_int16_refuses_modifiers_without_defined_integer_semantics() {
     }
     for op in [0x02, 0x03, 0x07, 0x0a, 0x0b, 0x0d] {
         check("clamp", &program(&vop3p(op, 0, [v(1), v(2), 0], 7, 0, true)), None, &[]);
+    }
+}
+
+#[test]
+fn f32_division_helpers_refuse_a_shader_written_mode() {
+    let set_round = [0xba80_1801u32, 1];
+    for op in [0x16du32, 0x16f, 0x15f] {
+        let mut body = set_round.to_vec();
+        body.extend_from_slice(&vop3(op, 0, [v(1), v(2), v(3)], 0, 0));
+        let err = translate(&shader(&program(&body), None)).err().unwrap_or_default();
+        assert!(err.contains("under a shader-written single-precision MODE is not lowered"), "op {op:#x}: {err}");
+        check("default MODE", &program(&vop3(op, 0, [v(1), v(2), v(3)], 0, 0)), None, &[]);
     }
 }

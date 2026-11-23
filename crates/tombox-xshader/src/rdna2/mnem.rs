@@ -191,7 +191,7 @@ pub fn vop3(op: u32) -> Option<&'static str> {
         0x362 => "v_ldexp_f32", 0x365 => "v_mbcnt_lo_u32_b32", 0x366 => "v_mbcnt_hi_u32_b32",
         0x2ff => "v_lshlrev_b64", 0x300 => "v_lshrrev_b64", 0x301 => "v_ashrrev_i64",
         0x15a => "v_sad_u8", 0x15b => "v_sad_hi_u8", 0x15c => "v_sad_u16", 0x15d => "v_sad_u32",
-        0x15e => "v_cvt_pk_u8_f32", 0x368 => "v_cvt_pknorm_i16_f32", 0x369 => "v_cvt_pknorm_u16_f32",
+        0x15e => "v_cvt_pk_u8_f32", 0x15f => "v_div_fixup_f32", 0x368 => "v_cvt_pknorm_i16_f32", 0x369 => "v_cvt_pknorm_u16_f32",
         0x36a => "v_cvt_pk_u16_u32", 0x36b => "v_cvt_pk_i16_i32", 0x373 => "v_mad_u32_u16", 0x375 => "v_mad_i32_i16",
         0x376 => "v_sub_nc_i32", 0x37f => "v_add_nc_i32", 0x377 => "v_permlane16_b32", 0x378 => "v_permlanex16_b32",
         0x303 => "v_add_nc_u16", 0x304 => "v_sub_nc_u16", 0x305 => "v_mul_lo_u16", 0x307 => "v_lshrrev_b16",
@@ -201,7 +201,7 @@ pub fn vop3(op: u32) -> Option<&'static str> {
         0x340 => "v_mad_u16", 0x35e => "v_mad_i16", 0x352 => "v_min3_i16", 0x353 => "v_min3_u16",
         0x355 => "v_max3_i16", 0x356 => "v_max3_u16", 0x358 => "v_med3_i16", 0x359 => "v_med3_u16",
         0x171 => "v_msad_u8", 0x14c => "v_fma_f64", 0x160 => "v_div_fixup_f64", 0x164 => "v_add_f64", 0x165 => "v_mul_f64",
-        0x166 => "v_min_f64", 0x167 => "v_max_f64", 0x168 => "v_ldexp_f64", 0x16e => "v_div_scale_f64", 0x170 => "v_div_fmas_f64",
+        0x166 => "v_min_f64", 0x167 => "v_max_f64", 0x168 => "v_ldexp_f64", 0x16d => "v_div_scale_f32", 0x16e => "v_div_scale_f64", 0x16f => "v_div_fmas_f32", 0x170 => "v_div_fmas_f64",
         0x174 => "v_trig_preop_f64", 0x176 => "v_mad_u64_u32", 0x177 => "v_mad_i64_i32",
         _ => return None,
     })
