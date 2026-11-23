@@ -2403,6 +2403,33 @@ impl<'a> Emitter<'a> {
                         written.insert(d + k as u16);
                     }
                 }
+                Enc::Smem if (0x10..=0x12).contains(&ins.op) => {
+                    return Err(format!(
+                        "{} at {:#x}: stores through a 64-bit scalar address (SBASE), which is not bound to a resource (no GPU-VA-to-resource map)",
+                        ins.mnemonic, ins.offset
+                    ));
+                }
+                Enc::Smem if (0x18..=0x1a).contains(&ins.op) => {
+                    let n = 1u32 << (ins.op - 0x18);
+                    let b = ins.src.first().and_then(sg).ok_or("s_buffer_store: bad base")?;
+                    ins.dst.first().and_then(sreg_num).ok_or("s_buffer_store: bad data")?;
+                    let bsym = sym.get(&b).copied().or_else(|| (!written.contains(&b)).then_some(Sym::Table(b as u8)));
+                    let cands = self.desc_candidates(bsym.as_ref(), 32).ok_or_else(|| {
+                        format!("s_buffer_store at {:#x}: base s{b} is not a buffer descriptor ({:?})", ins.offset, sym.get(&b))
+                    })?;
+                    if cands.len() != 1 {
+                        return Err(format!("s_buffer_store at {:#x}: base s{b} may name {} descriptors", ins.offset, cands.len()));
+                    }
+                    let (table, off) = cands[0];
+                    if self.kind_at(table, off, true)? != Some(1) {
+                        return Err(format!("s_buffer_store at {:#x}: descriptor at table s{table} offset {off:#x} is not writable", ins.offset));
+                    }
+                    let slot = self.bind_id(table, off, 32);
+                    let end = if ins.aux.imm < 0 { n } else { ins.aux.imm as u32 / 4 + n };
+                    let e = self.sbuf.entry((true, slot)).or_insert(0);
+                    *e = (*e).max(end);
+                    self.res.insert(idx, vec![Res::Buf(slot, true)]);
+                }
                 Enc::Smem if !(8..=12).contains(&ins.op) => {
                     if let Some(d) = ins.dst.first().and_then(sg) {
                         for k in 0..2u16 {
@@ -3944,6 +3971,41 @@ impl<'a> Emitter<'a> {
                         return Ok(());
                     }
                     self.line("// (descriptor fetch from root table — resolved statically)");
+                    return Ok(());
+                }
+                if (0x10..=0x12).contains(&ins.op) {
+                    return Err(format!(
+                        "{} at {:#x}: stores through a 64-bit scalar address (SBASE), which is not bound to a resource (no GPU-VA-to-resource map)",
+                        ins.mnemonic, ins.offset
+                    ));
+                }
+                if (0x18..=0x1a).contains(&ins.op) {
+                    let n = 1u32 << (ins.op - 0x18);
+                    let d = ins.dst.first().and_then(sreg_num).ok_or("s_buffer_store: bad data")?;
+                    let slot = match self.res.get(&idx).and_then(|v| v.first()).copied() {
+                        Some(Res::Buf(slot, true)) => slot,
+                        _ => return Err(format!("s_buffer_store at {:#x}: buffer did not resolve to a UAV", ins.offset)),
+                    };
+                    let soff = ins.raw.get(1).copied().unwrap_or(0) >> 25;
+                    let imm = ins.aux.imm as u32 & !3;
+                    let t = self.tmp;
+                    self.tmp += 1;
+                    if soff != 0x7d {
+                        self.touch(&sreg_opnd(soff as u8));
+                        self.line(&format!("uint t{t} = ({} & 0xfffffffcu) + {imm:#x}u;", ssrc_name(soff)?));
+                    } else if ins.aux.imm < 0 {
+                        return Err(format!("s_buffer_store at {:#x}: negative offset without SOFFSET", ins.offset));
+                    } else {
+                        self.line(&format!("uint t{t} = {imm:#x}u;"));
+                    }
+                    let nwords = self.sbuf_words((true, slot));
+                    for k in 0..n {
+                        let src = sreg_opnd(d + k as u8);
+                        self.touch(&src);
+                        let at = if k == 0 { format!("t{t}") } else { format!("(t{t} + {}u)", 4 * k) };
+                        self.line(&format!("uint t{t}w{k} = {at} >> 2;"));
+                        self.line(&format!("ubuf{slot}[t{t}w{k} / {nwords}u].w[t{t}w{k} % {nwords}u] = {};", r(&src)?));
+                    }
                     return Ok(());
                 }
                 let n = 1u32 << (ins.op - 8);

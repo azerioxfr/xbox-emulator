@@ -2027,6 +2027,60 @@ fn scalar_sopp_control() {
     }
 }
 
+#[test]
+fn scalar_buffer_stores() {
+    let vals = [0x1122_3344u32, 0x5566_7788, 0x99aa_bbcc, 0xddee_ff00];
+    let mut cs = Vec::new();
+    for (m, op, n) in [("s_buffer_store_dword", 0x18u32, 1u32), ("s_buffer_store_dwordx2", 0x19, 2), ("s_buffer_store_dwordx4", 0x1a, 4)] {
+        for (imm, soff) in [(0u32, SNULL), (4, SNULL), (8, SNULL), (0x40, SNULL), (4, 20)] {
+            let byte = if soff == SNULL { imm } else { imm + 12 } as usize;
+            let w = byte / 4;
+            let mut pre = Prog::new();
+            for k in 0..n {
+                pre.sv(10 + k, vals[k as usize]);
+            }
+            if soff != SNULL {
+                pre.sv(soff, 12);
+            }
+            let mut mem: Vec<(usize, u32)> = (0..n as usize).map(|k| (w + k, vals[k])).collect();
+            mem.push((w + n as usize, *BUF.get(w + n as usize).unwrap_or(&0)));
+            cs.push(BufCase { m, pre: pre.w, op: smem(op, 10, 0, imm, soff), rt: vec![], mem });
+        }
+    }
+    run_buf_cases("smem_buffer_store", &cs);
+}
+
+#[test]
+fn scalar_smem_store_refusals() {
+    let root = tombox_xshader::meta::RootSig { version: 2, flags: 1, params: vec![rtable(1, 8)], num_static_samplers: 0, static_samplers: Vec::new() };
+    for (m, op) in [("s_store_dword", 0x10u32), ("s_store_dwordx2", 0x11), ("s_store_dwordx4", 0x12)] {
+        let mut w = Prog::new();
+        w.sv(10, 0x1234).sv(11, 0x5678).raw(&smem(op, 10, 8, 0x10, SNULL));
+        let isa: Vec<u8> = w.w.iter().flat_map(|x| x.to_le_bytes()).collect();
+        assert!(tombox_xshader::rdna2::disassemble(&isa).iter().any(|i| i.mnemonic == m));
+        let e = translate(&shader_root(&w.words(), root.clone())).err().unwrap_or_else(|| panic!("{m}: translated"));
+        assert!(e.contains("stores through a 64-bit scalar address (SBASE)"), "{m}: {e}");
+    }
+    let mut w = Prog::new();
+    w.sv(10, 1).raw(&smem(0x18, 10, 50, 0, SNULL));
+    let e = translate(&shader_root(&w.words(), root.clone())).err().expect("s_buffer_store from an unmatched base");
+    assert!(e.contains("is not a buffer descriptor"), "{e}");
+    let mixed = tombox_xshader::meta::RootSig {
+        version: 2,
+        flags: 1,
+        params: vec![tombox_xshader::meta::RootParam {
+            visibility: 5,
+            kind: tombox_xshader::meta::RootParamKind::Descriptor { kind: 2, register: 0, space: 0 },
+        }],
+        num_static_samplers: 0,
+        static_samplers: Vec::new(),
+    };
+    let mut w = Prog::new();
+    w.sv(10, 1).raw(&smem(0x19, 10, 8, 0, SNULL));
+    let e = translate(&shader_root(&w.words(), mixed)).err().expect("s_buffer_store through a constant-buffer root descriptor");
+    assert!(e.contains("is not writable"), "{e}");
+}
+
 fn smem_data() -> Vec<u32> {
     (0..256u32).map(|i| 0xa500_0000 | (i * 0x0101) ).collect()
 }

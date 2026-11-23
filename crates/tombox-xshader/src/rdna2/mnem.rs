@@ -292,6 +292,8 @@ pub fn smem(op: u32) -> Option<&'static str> {
         0x03 => "s_load_dwordx8", 0x04 => "s_load_dwordx16", 0x08 => "s_buffer_load_dword",
         0x09 => "s_buffer_load_dwordx2", 0x0a => "s_buffer_load_dwordx4",
         0x0b => "s_buffer_load_dwordx8", 0x0c => "s_buffer_load_dwordx16",
+        0x10 => "s_store_dword", 0x11 => "s_store_dwordx2", 0x12 => "s_store_dwordx4",
+        0x18 => "s_buffer_store_dword", 0x19 => "s_buffer_store_dwordx2", 0x1a => "s_buffer_store_dwordx4",
         0x1f => "s_gl1_inv", 0x20 => "s_dcache_inv", 0x24 => "s_memtime", 0x25 => "s_memrealtime",
         0x26 => "s_atc_probe", 0x27 => "s_atc_probe_buffer",
         _ => return None,
