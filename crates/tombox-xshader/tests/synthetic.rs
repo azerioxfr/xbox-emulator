@@ -691,6 +691,18 @@ fn sendmsghalt_and_ordered_count_are_refused() {
     assert!(ordered.contains("ds_ordered_count: dispatch-ordered GDS append is not lowered"), "{ordered}");
 }
 
+#[test]
+fn setreg_and_getreg_refuse_unknown_hardware_registers() {
+    let getreg0 = compute_refusal(&[0xb900_0000, S_ENDPGM]);
+    assert!(getreg0.contains("s_getreg_b32: hardware register 0 unsupported"), "{getreg0}");
+    let setreg8 = compute_refusal(&[0xb980_0008, S_ENDPGM]);
+    assert!(setreg8.contains("s_setreg_b32: hardware register 8 unsupported"), "{setreg8}");
+    let setimm0 = compute_refusal(&[0xba80_0000, 0, S_ENDPGM]);
+    assert!(setimm0.contains("s_setreg_imm32_b32: hardware register 0 unsupported"), "{setimm0}");
+    let ex = shader(Stage::Compute, &[0xb900_0001, S_ENDPGM], vec![], vec![], None);
+    translate(&ex).expect("s_getreg_b32 of the mode register translates");
+}
+
 fn consecutive_lds() -> [u32; 7] {
     [0xd834_0000, 0x0000_0909, 0xd834_0000, 0x0000_0a09, 0xd8d8_0000, 0x0700_0007, S_ENDPGM]
 }
