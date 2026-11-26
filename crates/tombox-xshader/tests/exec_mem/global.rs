@@ -174,6 +174,12 @@ fn global_routing_and_refusals() {
         let got = tombox_xshader::rdna2::disassemble(&isa(&g(op, 2, 0, 1, 2, 20, 3))).into_iter().next().map(|i| i.mnemonic).unwrap_or_default();
         assert_eq!(got, m);
     }
+    for (op, m) in [(0x30u32, "flat_atomic_swap"), (0x31, "flat_atomic_cmpswap"), (0x32, "flat_atomic_add"), (0x33, "flat_atomic_sub"), (0x35, "flat_atomic_smin"), (0x36, "flat_atomic_umin"), (0x37, "flat_atomic_smax"), (0x38, "flat_atomic_umax"), (0x39, "flat_atomic_and"), (0x3a, "flat_atomic_or"), (0x3b, "flat_atomic_xor"), (0x3c, "flat_atomic_inc"), (0x3d, "flat_atomic_dec")] {
+        let got = tombox_xshader::rdna2::disassemble(&isa(&g(op, 2, 0, 1, 2, 20, 3))).into_iter().next().map(|i| i.mnemonic).unwrap_or_default();
+        assert_eq!(got, m);
+        let got = tombox_xshader::rdna2::disassemble(&isa(&g(op, 0, 0, 1, 2, 0x7d, 3))).into_iter().next().map(|i| i.mnemonic).unwrap_or_default();
+        assert_eq!(got, m);
+    }
     let mut p = Prog::new();
     p.raw(&g(0x30, 1, 0, 1, 2, 0x7d, 0));
     let mut w = p.w.clone();
@@ -190,8 +196,9 @@ fn global_routing_and_refusals() {
     p.raw(&g(0x30, 2, 0, 1, 2, 20, 3));
     let mut w = p.w.clone();
     w.push(S_ENDPGM);
-    let e = translate(&cs_extract(&w, 64)).err().unwrap_or_default();
-    assert!(e.contains("unsupported"), "{e}");
+    let t = translate(&cs_extract(&w, 64)).unwrap_or_else(|e| panic!("{e}"));
+    assert!(t.needs_global, "{}", t.hlsl);
+    assert!(t.hlsl.contains("InterlockedExchange"), "{}", t.hlsl);
     let mut p = Prog::new();
     let mut lds = g(0x0c, 2, 0, 1, 0, 20, 3);
     lds[0] |= 1 << 13;
@@ -394,4 +401,92 @@ fn narrow_loads_at_window_end() {
         assert!(lane_values.iter().all(|&actual| actual == value));
     }
     assert_eq!(fault_of(&fault).count, 0);
+}
+
+#[test]
+fn global_atomics() {
+    type At = fn(u32, u32, u32) -> u32;
+    let atoms: [(&'static str, u32, u32, At); 13] = [
+        ("flat_atomic_swap", 0x30, 0x1234_5678, |_, s, _| s),
+        ("flat_atomic_cmpswap", 0x31, 0xaaaa_5555, |m, s, c| if m == c { s } else { m }),
+        ("flat_atomic_add", 0x32, 1, |m, s, _| m.wrapping_add(s)),
+        ("flat_atomic_sub", 0x33, 1, |m, s, _| m.wrapping_sub(s)),
+        ("flat_atomic_smin", 0x35, 0, |m, s, _| (m as i32).min(s as i32) as u32),
+        ("flat_atomic_umin", 0x36, 0x8000_0000, |m, s, _| m.min(s)),
+        ("flat_atomic_smax", 0x37, 0, |m, s, _| (m as i32).max(s as i32) as u32),
+        ("flat_atomic_umax", 0x38, 0, |m, s, _| m.max(s)),
+        ("flat_atomic_and", 0x39, 0xff00_ff00, |m, s, _| m & s),
+        ("flat_atomic_or", 0x3a, 0x00ff_00ff, |m, s, _| m | s),
+        ("flat_atomic_xor", 0x3b, 0xffff_0000, |m, s, _| m ^ s),
+        ("flat_atomic_inc", 0x3c, 3, |m, s, _| if m >= s { 0 } else { m + 1 }),
+        ("flat_atomic_dec", 0x3d, 3, |m, s, _| if m == 0 || m > s { s } else { m - 1 }),
+    ];
+    let cmp_val = m1(0);
+    let w1_init: Vec<u32> = (0..W1.size as usize / 4).map(m1).collect();
+    let mut cs = Vec::new();
+    for (m, opc, data, f) in atoms {
+        for (seg, saddr) in [(2u32, 22u32), (0, 0x7d)] {
+            for glc in [false, true] {
+                let mut p = Prog::new();
+                p.sv(20, W0.base as u32).sv(21, (W0.base >> 32) as u32);
+                p.sv(22, W1.base as u32).sv(23, (W1.base >> 32) as u32);
+                p.raw(&[vop2(0x1a, 20, ic(2), 0)]);
+                p.vv(21, (W1.base >> 32) as u32);
+                p.vv(10, data);
+                if opc == 0x31 {
+                    p.vv(11, cmp_val);
+                }
+                let mut op = g(opc, seg, 0, 20, 10, saddr, 24);
+                if glc {
+                    op[0] |= 1 << 16;
+                }
+                p.raw(&op);
+                if glc {
+                    p.raw(&g(0x1c, 2, 0, 20, 24, 20, 0));
+                }
+                let mut w = p.w.clone();
+                w.push(S_ENDPGM);
+                let mut w1 = w1_init.clone();
+                for t in 0..64usize {
+                    w1[t] = f(w1_init[t], data, cmp_val);
+                }
+                let w0: Vec<(usize, u32)> = if glc { (0..64).map(|t| (t, w1_init[t])).collect() } else { Vec::new() };
+                cs.push(GCase { m, op: op.to_vec(), words: w, w0, w1 });
+            }
+        }
+    }
+    run_global_cases("flat_global_atomic", &cs);
+}
+
+#[test]
+fn global_atomic_window_end_and_fault() {
+    let mut p = Prog::new();
+    p.sv(22, W1.base as u32).sv(23, (W1.base >> 32) as u32);
+    p.vv(1, W1.size - 4);
+    p.vv(10, 0xdead_beef);
+    p.raw(&g(0x30, 2, 0, 1, 10, 22, 24));
+    let mut w = p.w.clone();
+    w.push(S_ENDPGM);
+    let (_, w1, fault, hlsl) = unsafe { run(&w) }.unwrap_or_else(|e| panic!("{e}"));
+    for (i, &x) in w1.iter().enumerate() {
+        let want = if i == (W1.size as usize - 4) / 4 { 0xdead_beef } else { m1(i) };
+        assert_eq!(x, want, "w1[{i}] after window-end swap\n{hlsl}");
+    }
+    assert_eq!(fault_of(&fault).count, 0, "{hlsl}");
+
+    let mut p = Prog::new();
+    p.sv(22, W1.base as u32).sv(23, (W1.base >> 32) as u32);
+    p.sv(24, MISS as u32).sv(25, (MISS >> 32) as u32);
+    p.vv(1, 0);
+    p.vv(10, 1);
+    p.raw(&g(0x32, 2, 0, 1, 10, 24, 24));
+    let mut w = p.w.clone();
+    w.push(S_ENDPGM);
+    let (_, w1b, faultb, hlsl) = unsafe { run(&w) }.unwrap_or_else(|e| panic!("{e}"));
+    let f = fault_of(&faultb);
+    assert_eq!(f.count, 64, "{hlsl}");
+    assert!((MISS..MISS + 256).contains(&f.first_va) && f.first_va % 4 == 0, "first_va {:#x}\n{hlsl}", f.first_va);
+    for (i, &x) in w1b.iter().enumerate() {
+        assert_eq!(x, m1(i), "w1[{i}] changed by a faulting atomic\n{hlsl}");
+    }
 }

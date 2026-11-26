@@ -165,6 +165,9 @@ impl<'a> Emitter<'a> {
         if ins.raw.first().is_some_and(|w| (w >> 13) & 1 != 0) {
             return Err(format!("{m}: LDS=1 (memory <-> LDS transfer) is not lowered"));
         }
+        if m.starts_with("flat_atomic_") {
+            return self.emit_global_atomic(ins);
+        }
         let (store, n, bytes, signed) = width(m).ok_or_else(|| format!("{m}: global/flat operation unsupported"))?;
         let va = self.global_va(ins)?;
         let t = self.tmp;
@@ -207,6 +210,69 @@ impl<'a> Emitter<'a> {
                 e
             };
             self.wv(&o, &e)?;
+        }
+        Ok(())
+    }
+
+    fn emit_global_atomic(&mut self, ins: &Insn) -> Result<(), String> {
+        let m = ins.mnemonic.as_str();
+        let op = m.strip_prefix("flat_atomic_").unwrap_or(m);
+        let glc = ins.raw.first().is_some_and(|w| (w >> 16) & 1 != 0);
+        let data = match ins.src.get(1) {
+            Some(Opnd::Vgpr(d)) => *d,
+            _ => return Err(format!("{m}: data operand is not a VGPR")),
+        };
+        self.touch(&Opnd::Vgpr(data));
+        let val = r(&Opnd::Vgpr(data))?;
+        let va = self.global_va(ins)?;
+        let t = self.tmp;
+        self.tmp += 1;
+        self.line(&format!("uint2 ga{t} = {va};"));
+        self.line(&format!("uint go{t} = 0u;"));
+        self.line(&format!("uint gw{t} = tb_gwhich(tb_gva(ga{t}.x & ~3u, ga{t}.y, 0u, 0), go{t});"));
+        self.line(&format!("uint gt{t} = 0u;"));
+        let guard = |body: &str| format!("if (exec_lo & 1u) {{ {body} }}");
+        if op == "cmpswap" {
+            self.touch(&Opnd::Vgpr(data + 1));
+            let cmp = r(&Opnd::Vgpr(data + 1))?;
+            let body = format!(
+                "if (gw{t} == 0xffffffffu) {{ tb_gmiss(ga{t}); }} else if (gw{t} == 0u) {{ tb_gw0.InterlockedCompareExchange(go{t}, {cmp}, {val}, gt{t}); }} else {{ tb_gw1.InterlockedCompareExchange(go{t}, {cmp}, {val}, gt{t}); }}"
+            );
+            self.line(&guard(&body));
+        } else if matches!(op, "smin" | "smax" | "inc" | "dec") {
+            let new = match op {
+                "smin" => format!("asuint(min(asint(gc{t}), asint({val})))"),
+                "smax" => format!("asuint(max(asint(gc{t}), asint({val})))"),
+                "inc" => format!("((gc{t} >= {val}) ? 0u : (gc{t} + 1u))"),
+                _ => format!("(((gc{t} == 0u) || (gc{t} > {val})) ? {val} : (gc{t} - 1u))"),
+            };
+            let body = format!(
+                "if (gw{t} == 0xffffffffu) {{ tb_gmiss(ga{t}); }} else {{ uint gc{t} = (gw{t} == 0u) ? tb_gw0.Load(go{t}) : tb_gw1.Load(go{t}); [allow_uav_condition] for (uint gi{t} = 0u; gi{t} < 1024u; gi{t}++) {{ uint gp{t} = 0u; if (gw{t} == 0u) {{ tb_gw0.InterlockedCompareExchange(go{t}, gc{t}, {new}, gp{t}); }} else {{ tb_gw1.InterlockedCompareExchange(go{t}, gc{t}, {new}, gp{t}); }} if (gp{t} == gc{t}) break; gc{t} = gp{t}; }} gt{t} = gc{t}; }}"
+            );
+            self.line(&guard(&body));
+        } else {
+            let (func, arg) = match op {
+                "add" => ("InterlockedAdd", val.clone()),
+                "sub" => ("InterlockedAdd", format!("(0u - {val})")),
+                "umin" => ("InterlockedMin", val.clone()),
+                "umax" => ("InterlockedMax", val.clone()),
+                "and" => ("InterlockedAnd", val.clone()),
+                "or" => ("InterlockedOr", val.clone()),
+                "xor" => ("InterlockedXor", val.clone()),
+                "swap" => ("InterlockedExchange", val),
+                other => return Err(format!("{m}: atomic {other} unsupported")),
+            };
+            let body = format!(
+                "if (gw{t} == 0xffffffffu) {{ tb_gmiss(ga{t}); }} else if (gw{t} == 0u) {{ tb_gw0.{func}(go{t}, {arg}, gt{t}); }} else {{ tb_gw1.{func}(go{t}, {arg}, gt{t}); }}"
+            );
+            self.line(&guard(&body));
+        }
+        if glc {
+            let vd = match ins.dst.first() {
+                Some(Opnd::Vgpr(v)) => *v,
+                _ => return Err(format!("{m}: bad vdst")),
+            };
+            self.wv(&Opnd::Vgpr(vd), &format!("gt{t}"))?;
         }
         Ok(())
     }
