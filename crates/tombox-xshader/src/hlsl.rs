@@ -3633,6 +3633,36 @@ impl<'a> Emitter<'a> {
                         self.line(&format!("scc = ((t{t}l | t{t}h) != 0u) ? 1u : 0u;"));
                         Ok(())
                     }
+                    "s_quadmask_b32" => {
+                        let t = self.tmp;
+                        self.tmp += 1;
+                        let e: Vec<String> = (0..8)
+                            .map(|i| format!("((({a} >> {}) & 0xfu) != 0u ? {:#x}u : 0u)", i * 4, 1u32 << i))
+                            .collect();
+                        self.line(&format!("uint t{t} = {};", e.join(" | ")));
+                        self.ws(&d, &format!("t{t}"))?;
+                        self.line(&format!("scc = (t{t} != 0u) ? 1u : 0u;"));
+                        Ok(())
+                    }
+                    "s_quadmask_b64" => {
+                        self.touch(&hi(&s[0]));
+                        let ah = r(&hi(&s[0]))?;
+                        let t = self.tmp;
+                        self.tmp += 1;
+                        let e: Vec<String> = (0..16)
+                            .map(|i| {
+                                let (w, sh) = if i < 8 { (&a, i * 4) } else { (&ah, (i - 8) * 4) };
+                                format!("((({w} >> {sh}) & 0xfu) != 0u ? {:#x}u : 0u)", 1u32 << i)
+                            })
+                            .collect();
+                        self.line(&format!("uint t{t} = {};", e.join(" | ")));
+                        self.ws(&d, &format!("t{t}"))?;
+                        let dh = hi(&d);
+                        self.touch(&dh);
+                        self.ws(&dh, "0u")?;
+                        self.line(&format!("scc = (t{t} != 0u) ? 1u : 0u;"));
+                        Ok(())
+                    }
                     // D[S0[4:0]] = 0 / 1
                     "s_bitset0_b32" => {
                         self.touch(&d);

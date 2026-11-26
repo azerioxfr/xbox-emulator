@@ -368,6 +368,8 @@ fn second_batch_scalar_ops() {
         ("s_bitset1_b64", vec![sop1(0x1e, 4, 2), to_v0, to_v1], vec!["= s5 | ("]),
         ("s_orn1_saveexec_b64", vec![sop1(0x38, 4, 0), to_v0], vec!["(~s0 | exec_lo)"]),
         ("s_orn2_saveexec_b32", vec![sop1(0x40, 4, 0), to_v0], vec!["(s0 | ~exec_lo)"]),
+        ("s_quadmask_b32", vec![sop1(0x2c, 4, 0), to_v0], vec!["((s0 >> 0) & 0xfu) != 0u ? 0x1u", "? 0x80u"]),
+        ("s_quadmask_b64", vec![sop1(0x2d, 4, 0), to_v0, to_v1], vec!["((s1 >> 28) & 0xfu) != 0u ? 0x8000u", "s5 = 0u"]),
         ("s_bitcmp1_b64", vec![0xbf0f_0200, to_v0], vec!["(s2) & 63u) >= 32u ? (s1 >>"]),
         ("s_bitcmp0_b64", vec![0xbf0e_0200, to_v0], vec!["& 1u) == 0u)"]),
         ("s_sleep / s_setprio / s_icache_inv", vec![0xbf8e_0001, 0xbf8f_0000, 0xbf93_0000, 0xbf8b_0000, 0xbf94_0000, 0xbf95_0000, to_v0], vec![]),

@@ -1014,6 +1014,22 @@ fn scalar_saveexec_lane_model() {
 }
 
 #[test]
+fn scalar_quadmask() {
+    let mut c = Cases::new();
+    let qm32 = |a: u32| (0..8).fold(0u32, |m, i| m | ((((a >> (i * 4)) & 0xf) != 0) as u32) << i);
+    for &a in &[0u32, 1, 0x10, 0x1111_1111, 0xf0f0_f0f0, 0xffff_ffff, 0x8000_0000, 0x8000_0001] {
+        let r = qm32(a);
+        s1(&mut c, "s_quadmask_b32", 0x2c, a, 0x5555_5555, 0, r, (r != 0) as u32);
+    }
+    let qm64 = |a: u64| (0..16).fold(0u64, |m, i| m | ((((a >> (i * 4)) & 0xf) != 0) as u64) << i);
+    for &a in &[0u64, 1, 0x10, 0x1111_1111_1111_1111, 0xf0f0_f0f0_f0f0_f0f0, u64::MAX, 0x8000_0000_0000_0000, 0x8000_0000_0000_0001] {
+        let r = qm64(a);
+        s1w(&mut c, "s_quadmask_b64", 0x2d, a, 0x5555_5555_5555_5555, 0, r, (r != 0) as u32);
+    }
+    c.run_both("quadmask");
+}
+
+#[test]
 fn scalar_sopk_sopc() {
     let mut c = Cases::new();
     for &d0 in &[0u32, 5, 0xffff_fff0, 0x8000_0000, 0x7fff, 0xffff_8000, 0x0000_8000] {
