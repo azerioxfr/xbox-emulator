@@ -530,6 +530,43 @@ fn geometry_adjacency_primitives_translate() {
     assert!(err.contains("input primitive"), "{err}");
 }
 
+fn geometry_sendmsg(simm16: u32) -> Result<tombox_xshader::hlsl::Translated, String> {
+    let mut ex = shader(
+        Stage::Geometry,
+        &[0xbf90_0000 | simm16, S_ENDPGM],
+        vec![sig("POSITION", 0, 3, 0, 0xf)],
+        vec![sig("SV_Position", 1, 3, 0, 0xf)],
+        None,
+    );
+    ex.gs_info = Some(GsInfo { input_primitive: 1, output_topology: 1, max_vertex_count: 1, mesh: None });
+    translate(&ex)
+}
+
+#[test]
+fn sendmsg_outside_a_geometry_shader_is_refused() {
+    let ex = shader(Stage::Compute, &[0xbf90_0000, S_ENDPGM], vec![], vec![], None);
+    let err = match translate(&ex) {
+        Ok(t) => panic!("s_sendmsg message 0 in a compute shader translated:\n{}", t.hlsl),
+        Err(e) => e,
+    };
+    assert!(err.starts_with("s_sendmsg outside a geometry shader"), "{err}");
+    let ok = shader(Stage::Compute, &[0xbf90_0001, S_ENDPGM], vec![], vec![], None);
+    translate(&ok).expect("s_sendmsg message 1 in a compute shader translates");
+}
+
+#[test]
+fn sendmsg_message_other_than_gs_done_and_emit_cut_is_refused() {
+    for msg in [0u32, 1, 4, 5, 6, 7, 8, 15] {
+        let err = match geometry_sendmsg(msg) {
+            Err(e) => e,
+            Ok(_) => panic!("s_sendmsg message {msg} translated"),
+        };
+        assert!(err.starts_with(&format!("s_sendmsg message {msg} unsupported")), "{err}");
+    }
+    geometry_sendmsg(3).expect("GS_DONE translates");
+    geometry_sendmsg(2).expect("GS emit/cut on stream 0 translates");
+}
+
 fn compute_threads(threads: Option<[u32; 3]>, preamble: [u32; 4]) -> String {
     let mut ex = shader(Stage::Compute, &[S_ENDPGM], vec![], vec![], None);
     ex.psv_numthreads = threads;
