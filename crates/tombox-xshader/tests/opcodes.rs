@@ -747,3 +747,14 @@ fn f32_division_helpers_refuse_a_shader_written_mode() {
         check("default MODE", &program(&vop3(op, 0, [v(1), v(2), v(3)], 0, 0)), None, &[]);
     }
 }
+
+#[test]
+fn dpp_control_and_non_float_modifiers_are_refused() {
+    let err = |dpp: [u32; 2]| translate(&shader(&program(&dpp), None)).err().unwrap_or_default();
+    let bad_ctrl = err([vop1(1, 6, 250), 1 | (0x100 << 8)]);
+    assert!(bad_ctrl.contains("v_mov_b32: DPP control 0x100 is not valid on RDNA2"), "{bad_ctrl}");
+    let mods = err([vop1(1, 6, 250), 1 | (0x111 << 8) | (1 << 20)]);
+    assert!(mods.contains("v_mov_b32: DPP source modifiers on a non-float operation"), "{mods}");
+    let ok = [vop1(1, 6, 250), 1 | (0x111 << 8) | (0xf << 24) | (0x2 << 28)];
+    check("dpp quad permute", &program(&ok), None, &["WaveReadLaneAt(v1"]);
+}
