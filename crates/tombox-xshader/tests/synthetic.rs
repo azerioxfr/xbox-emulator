@@ -691,6 +691,14 @@ fn sendmsghalt_and_ordered_count_are_refused() {
     assert!(ordered.contains("ds_ordered_count: dispatch-ordered GDS append is not lowered"), "{ordered}");
 }
 
+#[test]
+fn sethalt_one_is_refused() {
+    let halt = compute_refusal(&[0xbf8d_0001, S_ENDPGM]);
+    assert!(halt.contains("s_sethalt 1 halts the wave until a debugger resumes it"), "{halt}");
+    let ex = shader(Stage::Compute, &[0xbf8d_0000, S_ENDPGM], vec![], vec![], None);
+    translate(&ex).expect("s_sethalt 0 translates");
+}
+
 fn consecutive_lds() -> [u32; 7] {
     [0xd834_0000, 0x0000_0909, 0xd834_0000, 0x0000_0a09, 0xd8d8_0000, 0x0700_0007, S_ENDPGM]
 }
